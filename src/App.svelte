@@ -46,6 +46,20 @@
   let previewSize = 512;
   let tileRepeat = $state(1);
 
+  let baseColor = $state('#cccccc');
+  let materialRoughness = $state(0.85);
+  let materialMetalness = $state(0.0);
+
+  $effect(() => {
+    preview?.setBaseColor(baseColor);
+  });
+  $effect(() => {
+    preview?.setRoughnessOverride(materialRoughness);
+  });
+  $effect(() => {
+    preview?.setMetalness(materialMetalness);
+  });
+
   let capsInfo = $state('');
   let exportBusy = $state(false);
   let exportStatus = $state('');
@@ -237,6 +251,7 @@
       <div class="toggle">
         <button class:active={shape === 'plane'} onclick={() => setShape('plane')}>Плоскость</button>
         <button class:active={shape === 'box'} onclick={() => setShape('box')}>Куб</button>
+        <button class:active={shape === 'cylinder'} onclick={() => setShape('cylinder')}>Цилиндр</button>
         <button class:active={shape === 'sphere'} onclick={() => setShape('sphere')}>Сфера</button>
       </div>
       <div class="toggle">
@@ -248,6 +263,26 @@
   </section>
 
   <aside class="right">
+    <h2>Превью</h2>
+    <div class="preview-controls">
+      <div class="color-row">
+        <label for="basecolor">Цвет</label>
+        <input id="basecolor" type="color" bind:value={baseColor} />
+        <button class="swatch" title="Светлый бетон" onclick={() => (baseColor = '#cfcdc7')} style="background:#cfcdc7"></button>
+        <button class="swatch" title="Серый бетон" onclick={() => (baseColor = '#9b9994')} style="background:#9b9994"></button>
+        <button class="swatch" title="Тёмный бетон" onclick={() => (baseColor = '#5d5b58')} style="background:#5d5b58"></button>
+        <button class="swatch" title="Тёплый" onclick={() => (baseColor = '#c9bba5')} style="background:#c9bba5"></button>
+      </div>
+      <ParamSlider
+        spec={{ key: 'matRough', label: 'Глянцевость (низ ↔ матово)', min: 0, max: 1, step: 0.01, default: 0.85, uniform: '' }}
+        bind:value={materialRoughness}
+      />
+      <ParamSlider
+        spec={{ key: 'matMetal', label: 'Металл', min: 0, max: 1, step: 0.01, default: 0, uniform: '' }}
+        bind:value={materialMetalness}
+      />
+    </div>
+
     <h2>Карты</h2>
     <div class="thumbs">
       <MapThumbnail target={heightTarget} renderer={preview?.renderer} label="Height" onclick={() => downloadHeight(16)} />
@@ -341,6 +376,23 @@
     gap: 10px;
     margin-bottom: 4px;
   }
+  .preview-controls { margin-bottom: 6px; }
+  .color-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .color-row label { margin: 0; flex: 0 0 auto; }
+  .color-row input[type="color"] {
+    width: 40px; height: 30px; padding: 0; border: 1px solid #444;
+    border-radius: 4px; cursor: pointer; background: transparent;
+  }
+  .swatch {
+    width: 22px; height: 22px; padding: 0;
+    border: 1px solid #444; border-radius: 4px; cursor: pointer;
+  }
+  .swatch:hover { border-color: #4a7fb5; }
   button.big { width: 100%; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   .dl-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
   .status { font-size: 12px; color: #8aa; margin: 10px 0; }

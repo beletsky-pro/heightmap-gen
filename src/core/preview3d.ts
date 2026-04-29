@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-export type PreviewShape = 'plane' | 'box' | 'sphere';
+export type PreviewShape = 'plane' | 'box' | 'sphere' | 'cylinder';
 
 export interface Preview3D {
   renderer: THREE.WebGLRenderer;
@@ -16,6 +16,9 @@ export interface Preview3D {
   setRoughnessTexture: (tex: THREE.Texture | null) => void;
   setDisplacementScale: (v: number) => void;
   setTileRepeat: (n: number) => void;
+  setBaseColor: (hex: string) => void;
+  setRoughnessOverride: (v: number) => void;
+  setMetalness: (v: number) => void;
   resize: () => void;
   dispose: () => void;
 }
@@ -63,6 +66,7 @@ export function createPreview3D(canvas: HTMLCanvasElement): Preview3D {
   planeGeo.rotateX(-Math.PI / 2);
   const boxGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8, 96, 96, 96);
   const sphereGeo = new THREE.SphereGeometry(0.5, 256, 192);
+  const cylinderGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.85, 192, 192, false);
 
   const mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial> = new THREE.Mesh(planeGeo, material);
   scene.add(mesh);
@@ -72,6 +76,7 @@ export function createPreview3D(canvas: HTMLCanvasElement): Preview3D {
     const next: THREE.BufferGeometry =
       s === 'plane' ? planeGeo.clone()
       : s === 'box' ? boxGeo.clone()
+      : s === 'cylinder' ? cylinderGeo.clone()
       : sphereGeo.clone();
     mesh.geometry = next;
   }
@@ -123,6 +128,19 @@ export function createPreview3D(canvas: HTMLCanvasElement): Preview3D {
     }
   }
 
+  function setBaseColor(hex: string) {
+    material.color.set(hex);
+  }
+
+  function setRoughnessOverride(v: number) {
+    // Если roughnessMap установлен, итог = map * material.roughness, поэтому это множитель.
+    material.roughness = v;
+  }
+
+  function setMetalness(v: number) {
+    material.metalness = v;
+  }
+
   function resize() {
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
@@ -154,6 +172,7 @@ export function createPreview3D(canvas: HTMLCanvasElement): Preview3D {
     renderer, scene, camera, controls, material,
     setShape, setHeightTexture, setNormalTexture, setAOTexture, setRoughnessTexture,
     setDisplacementScale, setTileRepeat,
+    setBaseColor, setRoughnessOverride, setMetalness,
     resize, dispose,
   };
 }

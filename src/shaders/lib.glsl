@@ -134,3 +134,51 @@ vec3 voronoiTile(vec2 uv, float gridSize, float seed) {
 float remapContrast(float h, float contrast) {
   return clamp(0.5 + (h - 0.5) * contrast, 0.0, 1.0);
 }
+
+// Поры/каверны: бесшовное распределение круглых вмятин на сетке gridSize.
+// Только cellHash > density имеет пору. radius — относительный радиус поры внутри ячейки (0..0.5).
+// Возвращает глубину вмятины [0..1], где 1 — центр поры, 0 — нет поры.
+// Ячейка может быть «слегка деформирована» через jitter центра.
+float poresLayer(vec2 uv, float gridSize, float density, float radius, float jitterAmt, float seed) {
+  vec2 p = uv * gridSize;
+  vec2 ip = floor(p);
+  vec2 fp = fract(p);
+  float maxDimple = 0.0;
+  for (int dy = -1; dy <= 1; dy++) {
+    for (int dx = -1; dx <= 1; dx++) {
+      vec2 g = vec2(float(dx), float(dy));
+      vec2 cell = mod(ip + g, vec2(gridSize));
+      vec3 hash = hash33(vec3(cell, seed));
+      // Активна ли пора в этой ячейке?
+      if (hash.z < density) continue;
+      // Случайный центр (с уменьшенным jitter — поры обычно ближе к центру)
+      vec2 center = g + vec2(0.5) + (hash.xy - 0.5) * jitterAmt;
+      vec2 r = fp - center;
+      float d = length(r);
+      // Случайный радиус — от 60% до 100% от заданного, для разнообразия
+      float rad = radius * mix(0.6, 1.0, fract(hash.x * 7.31));
+      // Глубокая круглая вмятина с мягким краем
+      float dimple = 1.0 - smoothstep(rad * 0.6, rad, d);
+      // Наклон дна (slight bowl) — squared falloff внутри
+      dimple *= dimple;
+      maxDimple = max(maxDimple, dimple);
+    }
+  }
+  return maxDimple;
+}
+
+// Волосяные (hairline) трещины: Voronoi F2-F1, очень узкая полоса, опционально модулированная FBM
+// для извилистости. amount [0..1], width — относительная ширина (0.005..0.05).
+float hairlineCracks(vec2 uv, float gridSize, float width, float wiggleAmp, float wiggleFreq, float seed) {
+  // Wiggle: смещаем uv мелким шумом, чтобы линии не были прямыми
+  vec2 wuv = uv;
+  if (wiggleAmp > 0.001) {
+    wuv += (vec2(
+      gnoise4(toTorus(uv + vec2(seed * 0.13, 0.0), wiggleFreq)),
+      gnoise4(toTorus(uv + vec2(0.0, seed * 0.27), wiggleFreq))
+    ) - 0.5) * wiggleAmp;
+  }
+  vec3 vor = voronoiTile(wuv, gridSize, seed);
+  float edge = vor.y - vor.x;
+  return 1.0 - smoothstep(0.0, max(0.0001, width), edge);
+}
