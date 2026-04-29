@@ -32,19 +32,34 @@ void main() {
   float aggr = fbmTorus(uv + vec2(seed * 2.7, seed * 0.7), uScale * 14.0, 3, 2.0, 0.55);
   base += (aggr - 0.5) * 0.06 * uAggregate;
 
-  // ---- 3. Мелкие поры — два слоя разных размеров, плотно
-  float poresSmall = poresLayer(uv, max(20.0, uScale * 12.0), 0.55, 0.22, 0.55, floor(uSeed));
-  float poresMid   = poresLayer(uv, max(10.0, uScale *  6.0), 0.30, 0.28, 0.55, floor(uSeed * 1.7) + 11.0);
-  // Поры — это вмятины (вычитание)
+  // ---- 3. Мелкие поры — два слоя разных размеров, плотно, лёгкая анизотропия
+  float poresSmall = poresLayer(
+    uv, max(20.0, uScale * 12.0),
+    0.55, 0.22, /*jitter*/ 0.6, /*aniso*/ 0.4, /*wobble*/ 0.4,
+    floor(uSeed)
+  );
+  float poresMid = poresLayer(
+    uv, max(10.0, uScale * 6.0),
+    0.30, 0.28, /*jitter*/ 0.7, /*aniso*/ 0.6, /*wobble*/ 0.6,
+    floor(uSeed * 1.7) + 11.0
+  );
   base -= poresSmall * 0.08 * uPores;
   base -= poresMid   * 0.14 * uPores;
 
-  // ---- 4. Крупные каверны — большие, редкие, глубокие, неровной формы
+  // ---- 4. Крупные каверны — большие, редкие, сильно деформированные
   float cavernGrid = max(3.0, uScale * 1.5);
-  float cavernsRaw = poresLayer(uv, cavernGrid, 0.18, 0.40, 0.7, floor(uSeed * 0.83) + 73.0);
-  // Деформируем форму каверны fbm-шумом, чтобы она не была идеально круглой
-  float cavernShape = fbmTorus(uv + vec2(seed * 4.2, seed * 1.9), uScale * 4.0, 3, 2.0, 0.5);
-  cavernsRaw *= mix(0.6, 1.1, cavernShape);
+  float cavernsRaw = poresLayer(
+    uv, cavernGrid,
+    0.30, 0.45,
+    /*jitter*/ 1.0, /*aniso*/ 0.9, /*wobble*/ 1.0,
+    floor(uSeed * 0.83) + 73.0
+  );
+  // Доп. деформация формы каверны fbm-шумом — рваные края
+  float cavernShape = fbmTorus(uv + vec2(seed * 4.2, seed * 1.9), uScale * 4.0, 3, 2.0, 0.55);
+  cavernsRaw *= mix(0.5, 1.15, cavernShape);
+  // Случайные «дыры» в каждой каверне через высокочастотный шум
+  float cavernGrain = fbmTorus(uv + vec2(seed * 1.7, seed * 8.1), uScale * 18.0, 2, 2.0, 0.5);
+  cavernsRaw *= mix(0.85, 1.05, cavernGrain);
   base -= clamp(cavernsRaw, 0.0, 1.0) * 0.22 * uCaverns;
 
   // ---- 5. Волосяные трещины — две сетки с разными размерами и направлениями

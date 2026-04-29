@@ -79,40 +79,61 @@ export function createPreview3D(canvas: HTMLCanvasElement): Preview3D {
       : s === 'cylinder' ? cylinderGeo.clone()
       : sphereGeo.clone();
     mesh.geometry = next;
+    currentShape = s;
+    applyAllTextureWraps();
   }
 
-  function setTextureWrap(tex: THREE.Texture | null, repeat: number) {
+  // Per-shape UV-аспект: на цилиндре окружность 2π·r ≈ 2.64 при высоте 0.85,
+  // тогда без коррекции тайл растягивается ~3х по горизонтали. Сохраняем
+  // квадратное соотношение, домножая repeat.x на это число.
+  // Сфера: 2π по долготе и π по широте — соотношение 2:1.
+  const SHAPE_REPEAT: Record<PreviewShape, [number, number]> = {
+    plane: [1, 1],
+    box: [1, 1],
+    cylinder: [(2 * Math.PI * 0.42) / 0.85, 1],
+    sphere: [2, 1],
+  };
+  let currentShape: PreviewShape = 'plane';
+
+  function applyTextureWrap(tex: THREE.Texture | null) {
     if (!tex) return;
+    const [sx, sy] = SHAPE_REPEAT[currentShape];
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(repeat, repeat);
+    tex.repeat.set(sx * tileRepeat, sy * tileRepeat);
     tex.needsUpdate = true;
+  }
+
+  function applyAllTextureWraps() {
+    for (const tex of [material.displacementMap, material.normalMap, material.aoMap, material.roughnessMap]) {
+      applyTextureWrap(tex);
+    }
   }
 
   let tileRepeat = 1;
 
   function setHeightTexture(tex: THREE.Texture | null) {
-    setTextureWrap(tex, tileRepeat);
+    applyTextureWrap(tex);
     material.displacementMap = tex;
     material.needsUpdate = true;
   }
 
   function setNormalTexture(tex: THREE.Texture | null) {
-    setTextureWrap(tex, tileRepeat);
+    applyTextureWrap(tex);
     material.normalMap = tex;
     if (tex) material.normalScale.set(1, 1);
     material.needsUpdate = true;
   }
 
   function setAOTexture(tex: THREE.Texture | null) {
-    setTextureWrap(tex, tileRepeat);
+    applyTextureWrap(tex);
     material.aoMap = tex;
     material.aoMapIntensity = 1.2;
     material.needsUpdate = true;
   }
 
   function setRoughnessTexture(tex: THREE.Texture | null) {
-    setTextureWrap(tex, tileRepeat);
+    applyTextureWrap(tex);
     material.roughnessMap = tex;
     material.needsUpdate = true;
   }
@@ -123,9 +144,7 @@ export function createPreview3D(canvas: HTMLCanvasElement): Preview3D {
 
   function setTileRepeat(n: number) {
     tileRepeat = n;
-    for (const tex of [material.displacementMap, material.normalMap, material.aoMap, material.roughnessMap]) {
-      setTextureWrap(tex, n);
-    }
+    applyAllTextureWraps();
   }
 
   function setBaseColor(hex: string) {

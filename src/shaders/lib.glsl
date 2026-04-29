@@ -135,31 +135,64 @@ float remapContrast(float h, float contrast) {
   return clamp(0.5 + (h - 0.5) * contrast, 0.0, 1.0);
 }
 
-// Поры/каверны: бесшовное распределение круглых вмятин на сетке gridSize.
-// Только cellHash > density имеет пору. radius — относительный радиус поры внутри ячейки (0..0.5).
-// Возвращает глубину вмятины [0..1], где 1 — центр поры, 0 — нет поры.
-// Ячейка может быть «слегка деформирована» через jitter центра.
-float poresLayer(vec2 uv, float gridSize, float density, float radius, float jitterAmt, float seed) {
+// Поры/каверны: распределение неровных вмятин на сетке gridSize (бесшовно через mod).
+// Только cellHash > (1 - density) имеет пору.
+// Радиусы сильно варьируются (0.3..1.4 от base), форма — анизотропная (растянутая под случайным углом),
+// край — неровный (sin-периодическая модуляция расстояния).
+//
+// Параметры:
+//   gridSize  — количество ячеек по стороне (бесшовно при целом)
+//   density   — доля активных ячеек (0..1)
+//   radius    — базовый радиус поры внутри ячейки (0..0.5)
+//   jitterAmt — насколько центр сдвигается от середины ячейки (0..1)
+//   anisoAmt  — насколько форма растянута/сжата (0 = круг, 1 = сильно эллипсная)
+//   wobbleAmt — насколько край изломан (0 = гладкий, 1 = сильно неровный)
+//   seed      — random offset
+float poresLayer(
+  vec2 uv, float gridSize,
+  float density, float radius,
+  float jitterAmt, float anisoAmt, float wobbleAmt,
+  float seed
+) {
   vec2 p = uv * gridSize;
   vec2 ip = floor(p);
   vec2 fp = fract(p);
   float maxDimple = 0.0;
-  for (int dy = -1; dy <= 1; dy++) {
-    for (int dx = -1; dx <= 1; dx++) {
+  // Сосед-радиус 2: чтобы крупные jittered поры из соседних ячеек не обрезались на границе
+  for (int dy = -2; dy <= 2; dy++) {
+    for (int dx = -2; dx <= 2; dx++) {
       vec2 g = vec2(float(dx), float(dy));
       vec2 cell = mod(ip + g, vec2(gridSize));
-      vec3 hash = hash33(vec3(cell, seed));
-      // Активна ли пора в этой ячейке?
-      if (hash.z < density) continue;
-      // Случайный центр (с уменьшенным jitter — поры обычно ближе к центру)
-      vec2 center = g + vec2(0.5) + (hash.xy - 0.5) * jitterAmt;
+      vec3 h1 = hash33(vec3(cell, seed));
+      // Активна ли пора?
+      if (h1.z < (1.0 - density)) continue;
+      vec3 h2 = hash33(vec3(cell, seed + 41.0));
+
+      // Сильно сдвинутый центр
+      vec2 center = g + vec2(0.5) + (h1.xy - 0.5) * jitterAmt * 1.6;
       vec2 r = fp - center;
-      float d = length(r);
-      // Случайный радиус — от 60% до 100% от заданного, для разнообразия
-      float rad = radius * mix(0.6, 1.0, fract(hash.x * 7.31));
-      // Глубокая круглая вмятина с мягким краем
-      float dimple = 1.0 - smoothstep(rad * 0.6, rad, d);
-      // Наклон дна (slight bowl) — squared falloff внутри
+
+      // Анизотропия: повернуть и сжать
+      float angle = h2.x * 6.283185;
+      float cs = cos(angle);
+      float sn = sin(angle);
+      vec2 rRot = vec2(r.x * cs + r.y * sn, -r.x * sn + r.y * cs);
+      // Соотношение сторон от 1:1 до 1:2.5
+      float ratio = 1.0 + h2.y * 1.5 * anisoAmt;
+      vec2 rScaled = vec2(rRot.x * ratio, rRot.y / ratio);
+      float d = length(rScaled);
+
+      // Сильная вариация радиуса: 0.3..1.4
+      float rad = radius * (0.3 + 1.1 * fract(h1.x * 7.31 + h2.z * 3.7));
+
+      // Изломанный край: модуляция расстояния синусом по углу-r
+      float angR = atan(rScaled.y, rScaled.x);
+      float wobble = sin(angR * (3.0 + h2.z * 4.0) + h1.x * 6.28) * 0.18 * wobbleAmt;
+      wobble += sin(angR * (7.0 + h1.y * 5.0) + h2.x * 6.28) * 0.10 * wobbleAmt;
+
+      // Vmятина с мягким краем
+      float dimple = 1.0 - smoothstep(rad * (0.5 + wobble), rad * (1.0 + wobble), d);
+      // Форма дна: чашка
       dimple *= dimple;
       maxDimple = max(maxDimple, dimple);
     }

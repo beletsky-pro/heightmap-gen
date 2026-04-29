@@ -12,8 +12,10 @@
   } from './core/export';
   import { concrete } from './materials/concrete';
   import { plaster } from './materials/plaster';
-  import { stucco } from './materials/stucco';
   import { stone } from './materials/stone';
+  import { lines } from './materials/lines';
+  import { waves } from './materials/waves';
+  import { ribs } from './materials/ribs';
   import type { MaterialDef, ParamValues } from './materials/types';
   import { paramDefaults, applyPreset } from './materials/types';
   import MaterialPicker from './ui/MaterialPicker.svelte';
@@ -21,7 +23,7 @@
   import PresetMenu from './ui/PresetMenu.svelte';
   import MapThumbnail from './ui/MapThumbnail.svelte';
 
-  const materials: MaterialDef[] = [concrete, plaster, stucco, stone];
+  const materials: MaterialDef[] = [concrete, plaster, stone, lines, waves, ribs];
   let selectedId = $state('concrete');
   let currentDef = $derived(materials.find((m) => m.id === selectedId)!);
 
@@ -268,10 +270,7 @@
       <div class="color-row">
         <label for="basecolor">Цвет</label>
         <input id="basecolor" type="color" bind:value={baseColor} />
-        <button class="swatch" title="Светлый бетон" onclick={() => (baseColor = '#cfcdc7')} style="background:#cfcdc7"></button>
-        <button class="swatch" title="Серый бетон" onclick={() => (baseColor = '#9b9994')} style="background:#9b9994"></button>
-        <button class="swatch" title="Тёмный бетон" onclick={() => (baseColor = '#5d5b58')} style="background:#5d5b58"></button>
-        <button class="swatch" title="Тёплый" onclick={() => (baseColor = '#c9bba5')} style="background:#c9bba5"></button>
+        <span class="hex">{baseColor}</span>
       </div>
       <ParamSlider
         spec={{ key: 'matRough', label: 'Глянцевость (низ ↔ матово)', min: 0, max: 1, step: 0.01, default: 0.85, uniform: '' }}
@@ -385,14 +384,10 @@
   }
   .color-row label { margin: 0; flex: 0 0 auto; }
   .color-row input[type="color"] {
-    width: 40px; height: 30px; padding: 0; border: 1px solid #444;
+    width: 50px; height: 32px; padding: 0; border: 1px solid #444;
     border-radius: 4px; cursor: pointer; background: transparent;
   }
-  .swatch {
-    width: 22px; height: 22px; padding: 0;
-    border: 1px solid #444; border-radius: 4px; cursor: pointer;
-  }
-  .swatch:hover { border-color: #4a7fb5; }
+  .hex { font-family: monospace; font-size: 12px; color: #aaa; }
   button.big { width: 100%; padding: 12px; font-size: 14px; margin-bottom: 10px; }
   .dl-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
   .status { font-size: 12px; color: #8aa; margin: 10px 0; }
