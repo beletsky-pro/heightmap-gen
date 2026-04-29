@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.1 — 2026-04-29
+
+### Bug fixes
+- `effect_update_depth_exceeded` при загрузке: `$effect` бесконечно перезапускался, потому что `regenerate()` писал в `$state`-переменные (heightTarget и др.), которые читал же сам через `disposeTargets()`. Обёрнут в `untrack(() => regenerate())`.
+- Параметры материала теперь читаются явно через цикл по `currentDef.params` — `void currentValues` не подписывается на nested-мутации в Svelte 5 $state-прокси.
+
+### UX
+- Добавлен SVG-favicon (убирает 404 в консоли).
+
 ## v0.1.0 — 2026-04-29
 
 Первый релиз. MVP онлайн-генератора heightmap/displacement текстур для 3ds Max.

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import * as THREE from 'three';
   import { createPreview3D, type Preview3D, type PreviewShape } from './core/preview3d';
   import { NoiseRenderer } from './core/NoiseRenderer';
@@ -75,10 +75,18 @@
   }
 
   $effect(() => {
+    // Явно читаем все скаляры, на которые должна реагировать регенерация —
+    // void на $state-прокси не подписывается на nested-мутации.
     void selectedId;
-    void currentValues;
-    void derivedSet;
-    if (preview) regenerate();
+    for (const p of currentDef.params) void currentValues[p.key];
+    void derivedSet.normalStrength;
+    void derivedSet.aoStrength;
+    void derivedSet.roughnessBase;
+    void derivedSet.roughnessDetail;
+    void derivedSet.flipY;
+    // untrack: regenerate читает и пишет $state-переменные (heightTarget и др.).
+    // Без untrack effect триггерил бы сам себя через свои же writes (infinite loop).
+    if (preview) untrack(() => regenerate());
   });
 
   onMount(() => {
