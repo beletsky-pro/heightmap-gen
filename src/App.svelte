@@ -66,7 +66,7 @@
   let bridgeBusy = $state(false);
   let bridgeMsg = $state('');
   let bridgeDisplaceScale = $state(1.5);
-  let bridgeTessellate = $state(2);
+  let bridgeTessellate = $state(0);
   let bridgeAddUVW = $state(true);
   let bridgeApplyMaterial = $state(true);
   let bridgeIncludeMask = $state(false);
@@ -174,7 +174,8 @@
     if (preview) untrack(() => regenerate());
   });
 
-  // Структурные изменения — нужна пересборка модификатора стека
+  // Структурные изменения — НЕ запускают full автоматически (это бы блокировало Max).
+  // Просто помечаем флаг — пользователь нажмёт «Применить» когда захочет.
   $effect(() => {
     void bridgeTessellate;
     void bridgeAddUVW;
@@ -183,10 +184,10 @@
     void bridgeApplyMode;
     void bridgeMappingType;
     needsFullRebuild = true;
-    if (bridgeLive && bridgeStatus.online) untrack(() => scheduleLiveApply());
   });
 
-  // Не структурные (только meta) — displace strength можно обновить без rebuild
+  // Bridge live: реагирует на displace strength + сам факт включения live.
+  // displace strength не структурное — обновляется через freshenMapFile + d.strength.
   $effect(() => {
     void bridgeDisplaceScale;
     void bridgeLive;
@@ -364,10 +365,7 @@
       bridgeBusy = false;
       if (livePending && bridgeLive && bridgeStatus.online) {
         livePending = false;
-        setTimeout(() => {
-          const nextMode = needsFullRebuild ? 'full' : 'live';
-          applyToMax(bridgeLiveSize, true, nextMode);
-        }, 30);
+        setTimeout(() => applyToMax(bridgeLiveSize, true, 'live'), 30);
       }
     }
   }
@@ -383,11 +381,13 @@
     if (liveTimer !== undefined) clearTimeout(liveTimer);
     liveTimer = setTimeout(() => {
       liveTimer = undefined;
-      const nextMode: 'full' | 'live' = needsFullRebuild ? 'full' : 'live';
+      // Live ВСЕГДА посылает mode='live'. Если структура изменилась —
+      // покажем индикатор «Нужно нажать Применить», но full сам не вызываем
+      // (full с tessellate блокирует Max).
       if (bridgeBusy) {
         livePending = true;
       } else {
-        applyToMax(bridgeLiveSize, true, nextMode);
+        applyToMax(bridgeLiveSize, true, 'live');
       }
     }, bridgeLiveDebounceMs);
   }
@@ -662,7 +662,7 @@
         </button>
       {/if}
       <ParamSlider
-        spec={{ key: 'tessIters', label: 'Tessellate итераций', min: 0, max: 4, step: 1, default: 2, uniform: '' }}
+        spec={{ key: 'tessIters', label: 'Tessellate (0=без сабдива, медленный!)', min: 0, max: 4, step: 1, default: 0, uniform: '' }}
         bind:value={bridgeTessellate}
       />
       <label class="check">
@@ -680,11 +680,16 @@
 
       <label class="check live-check" class:on={bridgeLive}>
         <input type="checkbox" bind:checked={bridgeLive} disabled={!bridgeStatus.online} />
-        <span>Live update — Max обновляется автоматически</span>
+        <span>Live update — обновляет битмапы без пересборки модификаторов</span>
         {#if bridgeLive}
           <span class="live-dot" class:syncing={bridgeBusy} class:dirty={liveDirty}></span>
         {/if}
       </label>
+      {#if bridgeLive && needsFullRebuild}
+        <p class="bridge-help" style="color:var(--accent);">
+          Live использует существующий <code>HG_Displace</code>. Если ещё не применяли — нажмите «Применить» один раз.
+        </p>
+      {/if}
       {#if bridgeLive}
         <ParamSlider
           spec={{ key: 'liveSize', label: 'Live разрешение', min: 256, max: 2048, step: 256, default: 1024, uniform: '' }}
@@ -692,7 +697,12 @@
         />
       {/if}
 
-      <button class="primary big" disabled={!bridgeStatus.online || bridgeBusy} onclick={() => applyToMax(exportSize, false, 'full')} style="margin-top:10px;">
+      {#if needsFullRebuild && bridgeStatus.online}
+        <p class="dirty-hint">
+          ⚠️ Структурные настройки изменены — нажмите «Применить», чтобы обновить стек модификаторов.
+        </p>
+      {/if}
+      <button class="primary big" class:attention={needsFullRebuild && bridgeStatus.online} disabled={!bridgeStatus.online || bridgeBusy} onclick={() => applyToMax(exportSize, false, 'full')} style="margin-top:10px;">
         ⚡ Применить в 3ds Max
       </button>
       {#if bridgeMsg}
@@ -1019,6 +1029,24 @@
   }
   .suggest-btn:hover {
     background: color-mix(in srgb, var(--primary) 20%, var(--input-bg));
+  }
+
+  .dirty-hint {
+    margin: 8px 0 0;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent) 15%, var(--input-bg));
+    color: var(--accent);
+    font-size: var(--font-xs);
+    line-height: 1.4;
+  }
+  button.big.attention {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent), var(--shadow-sm);
+    animation: pulseAttention 1.6s ease-in-out infinite;
+  }
+  @keyframes pulseAttention {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent), var(--shadow-sm); }
+    50%      { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%,  transparent), var(--shadow-sm); }
   }
   .hints {
     font-size: var(--font-sm);

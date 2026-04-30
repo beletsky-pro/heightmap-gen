@@ -184,10 +184,16 @@
     local obj = selection[1]
     local objName = obj.name
 
-    -- LIVE: только refresh; если HG_Displace отсутствует — fallback на full
-    if mode == "live" and (hgFindHGDisplace obj) != undefined then (
-      hgLiveRefresh obj
-      format "[HG] live refresh: %\n" objName
+    -- LIVE: только refresh битмапов; никогда не fallback на full (это блокирует Max).
+    -- Если HG_Displace ещё нет, тик пропускается — пользователь должен нажать
+    -- «Применить» один раз, чтобы поставить стек.
+    if mode == "live" then (
+      if (hgFindHGDisplace obj) != undefined then (
+        hgLiveRefresh obj
+        format "[HG] live refresh: %\n" objName
+      ) else (
+        format "[HG] live skipped: no HG_Displace on '%' — нажмите «Применить» один раз\n" objName
+      )
     ) else (
       -- FULL apply
       local faceSel = undefined
