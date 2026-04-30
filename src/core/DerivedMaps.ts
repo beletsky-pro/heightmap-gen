@@ -4,6 +4,7 @@ import fullscreenVert from '../shaders/fullscreen.vert?raw';
 import normalFrag from '../shaders/normal.frag?raw';
 import aoFrag from '../shaders/ao.frag?raw';
 import roughnessFrag from '../shaders/roughness.frag?raw';
+import maskFrag from '../shaders/mask.frag?raw';
 
 export interface DerivedSettings {
   normalStrength: number;   // 1..10
@@ -19,6 +20,18 @@ export const defaultDerived: DerivedSettings = {
   aoStrength: 3.0,
   roughnessBase: 0.7,
   roughnessDetail: 4.0,
+};
+
+export interface MaskSettings {
+  threshold: number;  // 0..1
+  softness: number;   // 0..1, 0 = hard, 1 = очень плавно
+  invert: boolean;
+}
+
+export const defaultMask: MaskSettings = {
+  threshold: 0.5,
+  softness: 0.0,
+  invert: false,
 };
 
 export interface DerivedTargets {
@@ -76,4 +89,26 @@ export function generateDerived(
   roughMat.dispose();
 
   return { normal, ao, roughness };
+}
+
+export function generateMask(
+  noise: NoiseRenderer,
+  height: THREE.WebGLRenderTarget,
+  settings: MaskSettings,
+): THREE.WebGLRenderTarget {
+  const size = height.width;
+  const target = noise.createTarget(size, false, 'RGBA');
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: fullscreenVert,
+    fragmentShader: maskFrag,
+    uniforms: {
+      uHeight:    { value: height.texture },
+      uThreshold: { value: settings.threshold },
+      uSoftness:  { value: settings.softness },
+      uInvert:    { value: settings.invert ? 1.0 : 0.0 },
+    },
+  });
+  noise.renderToTarget(mat, target);
+  mat.dispose();
+  return target;
 }

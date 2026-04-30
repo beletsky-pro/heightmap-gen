@@ -4,7 +4,7 @@
   import { createPreview3D, type Preview3D, type PreviewShape } from './core/preview3d';
   import { NoiseRenderer } from './core/NoiseRenderer';
   import { generateHeight, defaultPost, type PostSettings } from './core/TextureGenerator';
-  import { generateDerived, defaultDerived, type DerivedSettings } from './core/DerivedMaps';
+  import { generateDerived, defaultDerived, generateMask, defaultMask, type DerivedSettings, type MaskSettings } from './core/DerivedMaps';
   import {
     exportHeightmap,
     exportDerivedRGBA,
@@ -34,6 +34,7 @@
 
   let derivedSet: DerivedSettings = $state({ ...defaultDerived });
   let postSet: PostSettings = $state({ ...defaultPost });
+  let maskSet: MaskSettings = $state({ ...defaultMask });
   let bwPreview = $state(false);
 
   let previewCanvas: HTMLCanvasElement;
@@ -44,6 +45,7 @@
   let normalTarget = $state<THREE.WebGLRenderTarget | undefined>(undefined);
   let aoTarget = $state<THREE.WebGLRenderTarget | undefined>(undefined);
   let roughnessTarget = $state<THREE.WebGLRenderTarget | undefined>(undefined);
+  let maskTarget = $state<THREE.WebGLRenderTarget | undefined>(undefined);
 
   let shape = $state<PreviewShape>('plane');
   let exportSize = $state(2048);
@@ -73,6 +75,7 @@
     if (normalTarget) { normalTarget.dispose(); normalTarget = undefined; }
     if (aoTarget) { aoTarget.dispose(); aoTarget = undefined; }
     if (roughnessTarget) { roughnessTarget.dispose(); roughnessTarget = undefined; }
+    if (maskTarget) { maskTarget.dispose(); maskTarget = undefined; }
   }
 
   function regenerate() {
@@ -84,6 +87,7 @@
     normalTarget = d.normal;
     aoTarget = d.ao;
     roughnessTarget = d.roughness;
+    maskTarget = generateMask(noiseRenderer, height, maskSet);
 
     preview.setHeightTexture(height.texture);
     preview.setNormalTexture(d.normal.texture);
@@ -106,6 +110,9 @@
     void postSet.gamma;
     void postSet.invert;
     void postSet.binarize;
+    void maskSet.threshold;
+    void maskSet.softness;
+    void maskSet.invert;
     // untrack: regenerate читает и пишет $state-переменные (heightTarget и др.).
     // Без untrack effect триггерил бы сам себя через свои же writes (infinite loop).
     if (preview) untrack(() => regenerate());
@@ -176,12 +183,13 @@
   }
 
   async function downloadAll() {
-    await runExport('Все карты', async (h, d) => {
+    await runExport('Все карты', async (h, d, m) => {
       await exportHeightmap(noiseRenderer!, h, `${currentDef.id}_height_16bit.png`, 16);
       await exportHeightmap(noiseRenderer!, h, `${currentDef.id}_height_8bit.png`, 8);
       await exportDerivedRGBA(noiseRenderer!, d.normal, `${currentDef.id}_normal.png`);
       await exportDerivedRGBA(noiseRenderer!, d.ao, `${currentDef.id}_ao.png`);
       await exportDerivedRGBA(noiseRenderer!, d.roughness, `${currentDef.id}_roughness.png`);
+      await exportDerivedRGBA(noiseRenderer!, m, `${currentDef.id}_mask_bw.png`);
     });
   }
 
@@ -192,13 +200,19 @@
     });
   }
 
+  async function downloadMask() {
+    await runExport('B&W mask', async (_h, _d, m) => {
+      await exportDerivedRGBA(noiseRenderer!, m, `${currentDef.id}_mask_bw.png`);
+    });
+  }
+
   /**
-   * Любой экспорт ренодит heightmap в полном `exportSize` (а не preview),
-   * считает derived маршруты на этом разрешении, прогоняет колбэк, dispose.
+   * Любой экспорт рендерит heightmap в полном `exportSize` (а не preview),
+   * считает derived и маску на этом разрешении, прогоняет колбэк, dispose.
    */
   async function runExport(
     label: string,
-    fn: (h: THREE.WebGLRenderTarget, d: ReturnType<typeof generateDerived>) => Promise<void>,
+    fn: (h: THREE.WebGLRenderTarget, d: ReturnType<typeof generateDerived>, m: THREE.WebGLRenderTarget) => Promise<void>,
   ) {
     if (!noiseRenderer || exportBusy) return;
     exportBusy = true;
@@ -207,11 +221,13 @@
       const t0 = performance.now();
       const { height } = generateHeight(noiseRenderer, currentDef, currentValues, exportSize, postSet);
       const d = generateDerived(noiseRenderer, height, derivedSet);
-      await fn(height, d);
+      const m = generateMask(noiseRenderer, height, maskSet);
+      await fn(height, d, m);
       height.dispose();
       d.normal.dispose();
       d.ao.dispose();
       d.roughness.dispose();
+      m.dispose();
       const ms = Math.round(performance.now() - t0);
       exportStatus = `${label} — готово за ${ms}мс`;
     } catch (e) {
@@ -248,18 +264,25 @@
       spec={{ key: 'mapGamma', label: 'Гамма', min: 0.3, max: 3, step: 0.05, default: 1, uniform: '' }}
       bind:value={postSet.gamma}
     />
-    <ParamSlider
-      spec={{ key: 'mapBinarize', label: 'Бинаризация (B&W)', min: 0, max: 1, step: 0.01, default: 0, uniform: '' }}
-      bind:value={postSet.binarize}
-    />
     <label class="check">
       <input type="checkbox" bind:checked={postSet.invert} />
       Инвертировать (выпуклое ↔ вогнутое)
     </label>
-    <div class="row" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;">
-      <button onclick={() => { postSet.contrast = 1; postSet.gamma = 1; postSet.binarize = 0; postSet.invert = false; }}>Сброс</button>
-      <button onclick={() => { postSet.contrast = 2.5; postSet.gamma = 1; postSet.binarize = 0.6; postSet.invert = false; }}>B&W</button>
-    </div>
+    <button style="width:100%;margin-top:8px;" onclick={() => { postSet.contrast = 1; postSet.gamma = 1; postSet.binarize = 0; postSet.invert = false; }}>Сброс контраста</button>
+
+    <h2>B&W маска (отдельный output)</h2>
+    <ParamSlider
+      spec={{ key: 'maskThreshold', label: 'Порог', min: 0, max: 1, step: 0.01, default: 0.5, uniform: '' }}
+      bind:value={maskSet.threshold}
+    />
+    <ParamSlider
+      spec={{ key: 'maskSoftness', label: 'Мягкость края', min: 0, max: 1, step: 0.01, default: 0, uniform: '' }}
+      bind:value={maskSet.softness}
+    />
+    <label class="check">
+      <input type="checkbox" bind:checked={maskSet.invert} />
+      Инвертировать маску
+    </label>
 
     <h2>Деривация карт</h2>
     <ParamSlider
@@ -339,12 +362,13 @@
       <MapThumbnail target={normalTarget} renderer={preview?.renderer} label="Normal" onclick={() => downloadDerived('normal')} />
       <MapThumbnail target={aoTarget} renderer={preview?.renderer} label="AO" onclick={() => downloadDerived('ao')} />
       <MapThumbnail target={roughnessTarget} renderer={preview?.renderer} label="Roughness" onclick={() => downloadDerived('roughness')} />
+      <MapThumbnail target={maskTarget} renderer={preview?.renderer} label="B&W маска" onclick={downloadMask} />
     </div>
 
     <h2>Скачать</h2>
 
     <button class="primary big" disabled={exportBusy} onclick={downloadAll}>
-      ⬇ Все карты (5 файлов)
+      ⬇ Все карты (6 файлов)
     </button>
 
     <div class="dl-row">
@@ -357,6 +381,7 @@
     </div>
     <div class="dl-row">
       <button disabled={exportBusy} onclick={() => downloadDerived('roughness')}>Roughness</button>
+      <button disabled={exportBusy} onclick={downloadMask}>B&W mask</button>
     </div>
 
     {#if exportStatus}
@@ -369,6 +394,7 @@
       <li>Normal → Normal Bump map → Bump-слот Physical Material.</li>
       <li>AO → Diffuse в режиме Multiply.</li>
       <li>Roughness → Roughness-слот Physical Material.</li>
+      <li>B&W mask → Opacity / Cutout, или Stencil, или вход для смешивания материалов.</li>
     </ol>
   </aside>
 </main>
