@@ -53,7 +53,9 @@ DEFAULT_PORT = 7878
 
 ROOT = Path(tempfile.gettempdir()) / "HeightmapGen"
 QUEUE_DIR = ROOT / "queue"
-ASSETS_DIR = ROOT / "assets"
+# Стабильный путь для live-обновлений: битмапы перезаписываются, Max
+# подхватывает по freshenMapFile с тех же путей.
+LIVE_DIR = ROOT / "live"
 
 # Путь к шаблону apply.ms.
 # В dev-режиме — рядом с server.py.
@@ -85,6 +87,12 @@ def build_apply_script(session_dir: Path, config: dict) -> str:
     apply_mode = str(config.get("applyMode", "auto"))
     if apply_mode not in ("auto", "object", "faces"):
         apply_mode = "auto"
+    mode = str(config.get("mode", "full"))
+    if mode not in ("full", "live"):
+        mode = "full"
+    mapping_type = str(config.get("mappingType", "auto"))
+    if mapping_type not in ("auto", "planar", "cylindrical", "spherical", "shrinkwrap", "box"):
+        mapping_type = "auto"
     # Для лога:
     ts = datetime.datetime.now().isoformat(timespec="seconds")
 
@@ -99,6 +107,8 @@ def build_apply_script(session_dir: Path, config: dict) -> str:
         .replace("{{APPLY_MATERIAL}}", "true" if apply_material else "false")
         .replace("{{MAT_NAME}}", mat_name)
         .replace("{{APPLY_MODE}}", apply_mode)
+        .replace("{{MODE}}", mode)
+        .replace("{{MAPPING_TYPE}}", mapping_type)
     )
 
 
@@ -166,10 +176,12 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
             self._json(400, {"error": "no maps"})
             return
 
-        # Папка ассетов сессии
-        session_id = uuid.uuid4().hex[:8]
-        session_dir = ASSETS_DIR / session_id
+        # Стабильный путь — Max-битмапы могут подхватить новый файл с того же пути
+        # через freshenMapFile (live-режим).
+        session_dir = LIVE_DIR
         session_dir.mkdir(parents=True, exist_ok=True)
+        # Сессионный id остаётся для логов/имени .ms-файла (чтобы видеть последовательность)
+        session_id = uuid.uuid4().hex[:8]
 
         for name, data_url in maps.items():
             if not isinstance(data_url, str) or "," not in data_url:
@@ -224,7 +236,7 @@ def main() -> int:
     args = parser.parse_args()
 
     QUEUE_DIR.mkdir(parents=True, exist_ok=True)
-    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+    LIVE_DIR.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -233,8 +245,8 @@ def main() -> int:
     )
     logging.info("HeightmapGen Bridge v%s", VERSION)
     logging.info("listening on http://%s:%s", args.host, args.port)
-    logging.info("queue:  %s", QUEUE_DIR)
-    logging.info("assets: %s", ASSETS_DIR)
+    logging.info("queue: %s", QUEUE_DIR)
+    logging.info("live:  %s", LIVE_DIR)
 
     if not TEMPLATE_PATH.exists():
         logging.error("template not found at %s", TEMPLATE_PATH)

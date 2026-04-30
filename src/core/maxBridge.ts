@@ -37,6 +37,10 @@ export interface BridgeApplyConfig {
   materialName?: string;
   /** "auto" (по face-selection), "object" (всегда весь объект), "faces" (только грани). */
   applyMode?: 'auto' | 'object' | 'faces';
+  /** "full" (rebuild material + modifier stack) | "live" (refresh bitmaps only). */
+  mode?: 'full' | 'live';
+  /** Тип UVWMap-проекции. "auto" — по классу объекта. */
+  mappingType?: 'auto' | 'planar' | 'cylindrical' | 'spherical' | 'shrinkwrap' | 'box';
 }
 
 export interface BridgeSelection {

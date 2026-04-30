@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.4.1 — 2026-04-30
+
+### Hot-reload Live (Max больше не залипает)
+В предыдущей версии Live-режим пересобирал стек модификаторов на каждом тике — Max замирал. Теперь:
+
+- В `apply_template.ms` два mode-ветви: `full` (пересборка как раньше) и `live` (только обновление битмапов).
+- В live-ветке: находим `HG_Displace` модификатор → обновляем `d.strength` + вызываем `freshenMapFile` на bitmap'ах в материале и Displace. Никакой пересборки стека.
+- Если `HG_Displace` не найден (первое включение Live) — fallback на full (одноразовая инициализация).
+- Web автоматически решает: `needsFullRebuild` ставится при изменении структурных настроек (Tessellate / UVWMap / Apply mode / Mapping type) — следующий tick делает full, потом обратно live.
+- Стабильный путь PNG (`%TEMP%/HeightmapGen/live/`) вместо session-id'ов — Max-битмапы перечитывают тот же файл.
+
+Результат: при кручении ползунков в live-режиме Max обновляет displacement за миллисекунды без перерисовки стека и без блокировок.
+
+### Авто-детект UVWMap по классу объекта
+Раньше всегда `Shrink Wrap` 100×100×100. Теперь:
+
+- **Box / Editable_Poly / Editable_Mesh** → Box mapping
+- **Sphere / GeoSphere** → Spherical
+- **Cylinder / Tube / Cone** → Cylindrical
+- **Plane / Quad_Patch** → Planar
+- Размеры гизмо берутся из `obj.boundingBox`
+- Web: новый select **«UVW-проекция»** (Авто / Box / Cylindrical / Spherical / Planar / Shrink Wrap) — авто можно переопределить вручную.
+
 ## v0.4.0 — 2026-04-30
 
 ### Sub-object polygon assignment

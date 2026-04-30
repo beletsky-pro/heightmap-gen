@@ -1,10 +1,15 @@
 -- =====================================================================
 -- HeightmapGen Bridge — apply script
 -- Generated: {{TIMESTAMP}}
--- Применяет сгенерированные карты к выделенному объекту.
--- При наличии face-selection (Editable_Poly / Editable_Mesh) — заворачивает
--- материал в Multi/Sub-Object и присваивает выбранным граням свой matID.
--- Idempotent: повторное применение заменяет существующий HG-слот и HG-модификаторы.
+--
+-- Два режима:
+--   "full" — собрать материал + стек модификаторов с нуля.
+--   "live" — нашли HG_Displace модификатор → обновили только битмапы и
+--            displace.strength через freshenMapFile (без пересборки).
+--            Если HG-модификаторов нет, делается fallback на "full".
+--
+-- Карты лежат в стабильном пути %TEMP%/HeightmapGen/live/, чтобы битмап-
+-- объекты в Max могли подхватить новый файл с того же пути.
 -- =====================================================================
 
 (
@@ -21,7 +26,9 @@
   local addUVW     = {{ADD_UVW}}
   local applyMat   = {{APPLY_MATERIAL}}
   local matName    = "{{MAT_NAME}}"
-  local applyMode  = "{{APPLY_MODE}}"  -- "auto" | "object" | "faces"
+  local applyMode  = "{{APPLY_MODE}}"   -- "auto" | "object" | "faces"
+  local mode       = "{{MODE}}"         -- "full" | "live"
+  local mapping    = "{{MAPPING_TYPE}}" -- "auto" | "planar" | "cylindrical" | "spherical" | "shrinkwrap" | "box"
 
   if not (doesFileExist heightPath) and (doesFileExist height8Path) do (
     heightPath = height8Path
@@ -29,9 +36,7 @@
 
   -- ---- Утилиты ---------------------------------------------------------
   fn hgIsOurModifier m = (
-    if m == undefined then false else (
-      matchPattern m.name pattern:"HG_*"
-    )
+    if m == undefined then false else (matchPattern m.name pattern:"HG_*")
   )
 
   fn hgRemoveOurModifiers obj = (
@@ -42,9 +47,15 @@
     )
   )
 
+  fn hgFindHGDisplace obj = (
+    local found = undefined
+    for m in obj.modifiers do (
+      if m != undefined and m.name == "HG_Displace" do (found = m; exit)
+    )
+    found
+  )
+
   fn hgGetFaceSelection obj = (
-    -- Возвращает (BitArray) выделенных граней, либо undefined если нет
-    -- сабобъектного выделения. Поддерживает Editable_Poly и Editable_Mesh.
     local cls = classOf obj.baseObject
     if cls == Editable_Poly then (
       local s = polyop.getFaceSelection obj
@@ -54,6 +65,32 @@
       if s != undefined and s.numberSet > 0 then return s
     )
     undefined
+  )
+
+  fn hgDetectMappingType obj = (
+    -- Возвращает индекс UVWMap.maptype:
+    -- 0=Planar, 1=Cylindrical, 2=Spherical, 3=Shrink Wrap, 4=Box
+    -- (в MAXScript нумерация с 0).
+    local cls = classOf obj.baseObject
+    if cls == Box       then 4
+    else if cls == Sphere    then 2
+    else if cls == GeoSphere then 2
+    else if cls == Cylinder  then 1
+    else if cls == Tube      then 1
+    else if cls == Cone      then 1
+    else if cls == Plane     then 0
+    else if cls == Quad_Patch then 0
+    else 4  -- по умолчанию Box для произвольной геометрии
+  )
+
+  fn hgResolveMapping obj override = (
+    if override == "auto"        then return (hgDetectMappingType obj)
+    if override == "planar"      then 0
+    else if override == "cylindrical" then 1
+    else if override == "spherical"   then 2
+    else if override == "shrinkwrap"  then 3
+    else if override == "box"         then 4
+    else 4
   )
 
   fn hgBuildPhysicalMaterial = (
@@ -72,16 +109,14 @@
   )
 
   fn hgFindMultiSlotByName multi nm = (
-    -- Ищем существующий слот с таким же именем материала
+    local found = 0
     for i = 1 to multi.numsubs do (
-      if multi.materialList[i] != undefined and multi.materialList[i].name == nm do return i
+      if multi.materialList[i] != undefined and multi.materialList[i].name == nm do (found = i; exit)
     )
-    0
+    found
   )
 
   fn hgEnsureMulti obj = (
-    -- Возвращает Multi/Sub материал на объекте, оборачивая существующий
-    -- материал в первый слот, если нужно.
     local m = obj.material
     if classOf m == MultiMaterial then return m
     local multi = multimaterial numsubs:1
@@ -97,108 +132,130 @@
     multi
   )
 
-  fn hgApplyMaterialToFaces obj faceSel pm = (
-    -- Берём (или создаём) Multi/Sub, заменяем/добавляем HG-слот, ставим matID
-    local multi = hgEnsureMulti obj
-    local slot = hgFindMultiSlotByName multi matName
-    if slot == 0 then (
-      multi.numsubs = multi.numsubs + 1
-      slot = multi.numsubs
-      multi.materialIdList[slot] = slot
+  fn hgCollectHGMats obj = (
+    -- Возвращает все материалы с именем = matName, найденные на объекте
+    local mats = #()
+    local m = obj.material
+    if m == undefined then return mats
+    if classOf m == MultiMaterial then (
+      for sub in m.materialList do (
+        if sub != undefined and sub.name == matName do append mats sub
+      )
+    ) else (
+      if m.name == matName do append mats m
     )
-    multi.materialList[slot] = pm
-
-    -- Назначаем matID = slot для выделенных граней
-    local cls = classOf obj.baseObject
-    if cls == Editable_Poly then (
-      polyop.setFaceMatID obj faceSel slot
-    ) else if cls == Editable_Mesh then (
-      meshop.setFaceMatID obj faceSel slot
-    )
-    update obj
-    slot
+    mats
   )
 
-  fn hgApplyMaterialWhole obj pm = (
-    obj.material = pm
+  fn hgRefreshBitmap b = (
+    if b == undefined then return ok
+    try (freshenMapFile b) catch (
+      try (b.filename = b.filename) catch ()
+    )
+  )
+
+  fn hgLiveRefresh obj = (
+    -- Обновить битмапы в существующих модификаторе и материале без
+    -- пересборки стека.
+    local d = hgFindHGDisplace obj
+    local refreshed = false
+    if d != undefined then (
+      d.strength = dispScale
+      hgRefreshBitmap d.map
+      refreshed = true
+    )
+    for m in (hgCollectHGMats obj) do (
+      if m.bump_map != undefined and isProperty m.bump_map "normal_map" then (
+        hgRefreshBitmap m.bump_map.normal_map
+        refreshed = true
+      )
+      hgRefreshBitmap m.roughness_map
+    )
+    redrawViews()
+    refreshed
   )
 
   -- ---- Основная логика -------------------------------------------------
   if selection.count == 0 then (
-    messageBox "Heightmap Gen: выделите объект перед применением." beep:false title:"Heightmap Gen"
+    if mode != "live" do messageBox "Heightmap Gen: выделите объект." beep:false title:"Heightmap Gen"
   ) else if not (doesFileExist heightPath) then (
     messageBox ("Heightmap Gen: heightmap не найден.\n" + heightPath) beep:false title:"Heightmap Gen"
   ) else (
     local obj = selection[1]
     local objName = obj.name
 
-    -- Решаем: faces или object?
-    local faceSel = undefined
-    if applyMode != "object" do faceSel = hgGetFaceSelection obj
-    if applyMode == "faces" and faceSel == undefined do (
-      messageBox "Heightmap Gen: face-selection отсутствует. Применяю к объекту." beep:false
-    )
-    local useFaces = (faceSel != undefined)
-
-    -- Удалить ранее наложенные HG-модификаторы (idempotent)
-    hgRemoveOurModifiers obj
-
-    -- ---- Material ------------------------------------------------------
-    if applyMat then (
-      try (
-        local pm = hgBuildPhysicalMaterial()
-        if useFaces then (
-          local slot = hgApplyMaterialToFaces obj faceSel pm
-          format "[HG] material applied to % faces (slot %)\n" faceSel.numberSet slot
-        ) else (
-          hgApplyMaterialWhole obj pm
-        )
-      ) catch (
-        format "[HG] material error: %\n" (getCurrentException())
-      )
-    )
-
-    -- ---- Modifier stack ------------------------------------------------
-    -- Для faces-режима стек не накладываем: Displace в Max не фильтруется
-    -- по граням. Если нужно деформировать только эти грани — отделите их
-    -- (Detach) и применяйте отдельно.
-    if not useFaces then (
-      if tessIters > 0 do (
-        try (
-          local tess = Tessellate()
-          tess.name = "HG_Tessellate"
-          tess.iterations = tessIters
-          tess.tension = 0.0
-          tess.type = 0
-          addModifier obj tess
-        ) catch (format "[HG] tess error: %\n" (getCurrentException()))
-      )
-      if addUVW do (
-        try (
-          local uvw = UVWMap()
-          uvw.name = "HG_UVWMap"
-          uvw.maptype = 4
-          uvw.length = 100
-          uvw.width = 100
-          uvw.height = 100
-          addModifier obj uvw
-        ) catch (format "[HG] uvw error: %\n" (getCurrentException()))
-      )
-      try (
-        local d = Displace()
-        d.name = "HG_Displace"
-        d.strength = dispScale
-        d.decay = 0
-        d.map = bitmaptexture filename:heightPath
-        addModifier obj d
-      ) catch (format "[HG] disp error: %\n" (getCurrentException()))
-    )
-
-    redrawViews()
-    if useFaces then (
-      format "[HG] applied to % faces of '%' base=%\n" faceSel.numberSet objName base
+    -- LIVE: только refresh; если HG_Displace отсутствует — fallback на full
+    if mode == "live" and (hgFindHGDisplace obj) != undefined then (
+      hgLiveRefresh obj
+      format "[HG] live refresh: %\n" objName
     ) else (
-      format "[HG] applied to '%' base=%\n" objName base
+      -- FULL apply
+      local faceSel = undefined
+      if applyMode != "object" do faceSel = hgGetFaceSelection obj
+      local useFaces = (faceSel != undefined)
+
+      hgRemoveOurModifiers obj
+
+      if applyMat then (
+        try (
+          local pm = hgBuildPhysicalMaterial()
+          if useFaces then (
+            local multi = hgEnsureMulti obj
+            local slot = hgFindMultiSlotByName multi matName
+            if slot == 0 then (
+              multi.numsubs = multi.numsubs + 1
+              slot = multi.numsubs
+              multi.materialIdList[slot] = slot
+            )
+            multi.materialList[slot] = pm
+            local cls = classOf obj.baseObject
+            if cls == Editable_Poly then polyop.setFaceMatID obj faceSel slot
+            else if cls == Editable_Mesh then meshop.setFaceMatID obj faceSel slot
+            update obj
+          ) else (
+            obj.material = pm
+          )
+        ) catch (format "[HG] material error: %\n" (getCurrentException()))
+      )
+
+      if not useFaces then (
+        if tessIters > 0 do (
+          try (
+            local tess = Tessellate()
+            tess.name = "HG_Tessellate"
+            tess.iterations = tessIters
+            tess.tension = 0.0
+            tess.type = 0
+            addModifier obj tess
+          ) catch (format "[HG] tess err: %\n" (getCurrentException()))
+        )
+        if addUVW do (
+          try (
+            local uvw = UVWMap()
+            uvw.name = "HG_UVWMap"
+            uvw.maptype = hgResolveMapping obj mapping
+            -- Подгоняем размеры гизмо под bbox объекта
+            local bb = obj.boundingBox
+            local sz = bb.max - bb.min
+            uvw.length = (amax 0.001 (abs sz.y))
+            uvw.width  = (amax 0.001 (abs sz.x))
+            uvw.height = (amax 0.001 (abs sz.z))
+            addModifier obj uvw
+          ) catch (format "[HG] uvw err: %\n" (getCurrentException()))
+        )
+        try (
+          local d = Displace()
+          d.name = "HG_Displace"
+          d.strength = dispScale
+          d.decay = 0
+          d.map = bitmaptexture filename:heightPath
+          addModifier obj d
+        ) catch (format "[HG] disp err: %\n" (getCurrentException()))
+      )
+
+      redrawViews()
+      if useFaces then format "[HG] full apply (% faces) on '%'\n" faceSel.numberSet objName
+      else            format "[HG] full apply on '%'\n" objName
     )
   )
 )

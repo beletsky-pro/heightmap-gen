@@ -71,6 +71,7 @@
   let bridgeApplyMaterial = $state(true);
   let bridgeIncludeMask = $state(false);
   let bridgeApplyMode = $state<'auto' | 'object' | 'faces'>('auto');
+  let bridgeMappingType = $state<'auto' | 'planar' | 'cylindrical' | 'spherical' | 'shrinkwrap' | 'box'>('auto');
   let bridgeSelection = $state<BridgeSelection>({ hasSelection: false });
 
   // Live mode — debounced auto-apply при любом изменении
@@ -79,7 +80,11 @@
   let bridgeLiveDebounceMs = $state(500);
   let livePending = false;
   let liveTimer: ReturnType<typeof setTimeout> | undefined;
-  let liveDirty = $state(false);  // показывает «есть несохранённые изменения»
+  let liveDirty = $state(false);
+
+  // Структурные настройки (требуют пересборки модификаторов).
+  // Когда они меняются, следующий live-tick получит mode='full', потом снова 'live'.
+  let needsFullRebuild = $state(true);  // первый раз — full
 
   async function pingBridge() {
     bridgeStatus = await bridge.ping();
@@ -169,15 +174,21 @@
     if (preview) untrack(() => regenerate());
   });
 
-  // Bridge-config изменения, не запускающие regenerate (выбор tessellate, displace etc).
-  // Если live mode включён, всё равно надо переотправить.
+  // Структурные изменения — нужна пересборка модификатора стека
   $effect(() => {
-    void bridgeDisplaceScale;
     void bridgeTessellate;
     void bridgeAddUVW;
     void bridgeApplyMaterial;
     void bridgeIncludeMask;
     void bridgeApplyMode;
+    void bridgeMappingType;
+    needsFullRebuild = true;
+    if (bridgeLive && bridgeStatus.online) untrack(() => scheduleLiveApply());
+  });
+
+  // Не структурные (только meta) — displace strength можно обновить без rebuild
+  $effect(() => {
+    void bridgeDisplaceScale;
     void bridgeLive;
     if (bridgeLive && bridgeStatus.online) untrack(() => scheduleLiveApply());
   });
@@ -289,10 +300,12 @@
 
   /**
    * Применить текущие карты в запущенный 3ds Max через локальный bridge.
-   * Размер по умолчанию = `exportSize`. Для live-режима передаётся `bridgeLiveSize`
-   * (меньшее разрешение для скорости).
+   * mode='full' — полная пересборка материала и стека модификаторов.
+   * mode='live' — только обновление битмапов (быстро, не блокирует Max).
+   * Если структурные настройки изменились (`needsFullRebuild=true`),
+   * следующий live-tick автоматически делает 'full', потом снова 'live'.
    */
-  async function applyToMax(size: number = exportSize, silent = false) {
+  async function applyToMax(size: number = exportSize, silent = false, mode: 'full' | 'live' = 'full') {
     if (!noiseRenderer || bridgeBusy) return;
     if (!bridgeStatus.online) {
       if (!silent) bridgeMsg = 'Bridge offline. Запустите server.py.';
@@ -336,19 +349,25 @@
         applyMaterial: bridgeApplyMaterial,
         materialName: `HeightmapGen_${currentDef.id}`,
         applyMode: bridgeApplyMode,
+        mode,
+        mappingType: bridgeMappingType,
       });
+      if (mode === 'full') needsFullRebuild = false;
       const ms = Math.round(performance.now() - t0);
-      bridgeMsg = silent ? `Live ${size}px — ${ms}мс` : `Готово за ${ms}мс — session ${resp.session}`;
+      bridgeMsg = silent
+        ? `Live ${mode} ${size}px — ${ms}мс`
+        : `Готово за ${ms}мс — session ${resp.session}`;
       liveDirty = false;
     } catch (e) {
       bridgeMsg = `Ошибка: ${(e as Error).message}`;
     } finally {
       bridgeBusy = false;
-      // если за время апплая накопились изменения — стартуем ещё раз
       if (livePending && bridgeLive && bridgeStatus.online) {
         livePending = false;
-        // микро-задержка чтобы не зацикливаться, если пользователь быстро двигает слайдер
-        setTimeout(() => applyToMax(bridgeLiveSize, true), 30);
+        setTimeout(() => {
+          const nextMode = needsFullRebuild ? 'full' : 'live';
+          applyToMax(bridgeLiveSize, true, nextMode);
+        }, 30);
       }
     }
   }
@@ -364,10 +383,11 @@
     if (liveTimer !== undefined) clearTimeout(liveTimer);
     liveTimer = setTimeout(() => {
       liveTimer = undefined;
+      const nextMode: 'full' | 'live' = needsFullRebuild ? 'full' : 'live';
       if (bridgeBusy) {
         livePending = true;
       } else {
-        applyToMax(bridgeLiveSize, true);
+        applyToMax(bridgeLiveSize, true, nextMode);
       }
     }, bridgeLiveDebounceMs);
   }
@@ -622,6 +642,16 @@
         <option value="faces">Только выделенные грани</option>
       </select>
 
+      <label for="map-type" class="muted" style="margin-top:10px;">UVW-проекция</label>
+      <select id="map-type" bind:value={bridgeMappingType}>
+        <option value="auto">Авто (по классу объекта)</option>
+        <option value="box">Box</option>
+        <option value="cylindrical">Cylindrical</option>
+        <option value="spherical">Spherical</option>
+        <option value="planar">Planar</option>
+        <option value="shrinkwrap">Shrink Wrap</option>
+      </select>
+
       <ParamSlider
         spec={{ key: 'dispScale', label: 'Displace strength', min: 0.01, max: 50, step: 0.01, default: 1.5, uniform: '' }}
         bind:value={bridgeDisplaceScale}
@@ -662,7 +692,7 @@
         />
       {/if}
 
-      <button class="primary big" disabled={!bridgeStatus.online || bridgeBusy} onclick={() => applyToMax()} style="margin-top:10px;">
+      <button class="primary big" disabled={!bridgeStatus.online || bridgeBusy} onclick={() => applyToMax(exportSize, false, 'full')} style="margin-top:10px;">
         ⚡ Применить в 3ds Max
       </button>
       {#if bridgeMsg}
