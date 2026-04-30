@@ -55,8 +55,15 @@ ROOT = Path(tempfile.gettempdir()) / "HeightmapGen"
 QUEUE_DIR = ROOT / "queue"
 ASSETS_DIR = ROOT / "assets"
 
-# Путь к шаблону apply.ms — рядом с этим скриптом
-TEMPLATE_PATH = Path(__file__).resolve().parent / "apply_template.ms"
+# Путь к шаблону apply.ms.
+# В dev-режиме — рядом с server.py.
+# В PyInstaller-бандле (--onedir / --onefile) — в `sys._MEIPASS`.
+def _resource(name: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / name
+
+
+TEMPLATE_PATH = _resource("apply_template.ms")
 
 
 def _ms_path(p: Path) -> str:
@@ -75,6 +82,9 @@ def build_apply_script(session_dir: Path, config: dict) -> str:
     add_uvw = bool(config.get("addUVW", True))
     apply_material = bool(config.get("applyMaterial", True))
     mat_name = str(config.get("materialName", "HeightmapGen"))
+    apply_mode = str(config.get("applyMode", "auto"))
+    if apply_mode not in ("auto", "object", "faces"):
+        apply_mode = "auto"
     # Для лога:
     ts = datetime.datetime.now().isoformat(timespec="seconds")
 
@@ -88,6 +98,7 @@ def build_apply_script(session_dir: Path, config: dict) -> str:
         .replace("{{ADD_UVW}}", "true" if add_uvw else "false")
         .replace("{{APPLY_MATERIAL}}", "true" if apply_material else "false")
         .replace("{{MAT_NAME}}", mat_name)
+        .replace("{{APPLY_MODE}}", apply_mode)
     )
 
 
@@ -109,13 +120,28 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
         self._set_cors()
         self.end_headers()
 
-    # ---- GET /ping ----
+    # ---- GET /ping, /selection ----
     def do_GET(self) -> None:  # noqa: N802
         url = urlparse(self.path)
         if url.path == "/ping":
             self._json(200, {"status": "ok", "version": VERSION})
-        else:
-            self._json(404, {"error": "not found"})
+            return
+        if url.path == "/selection":
+            sel_path = ROOT / "selection.json"
+            if sel_path.exists():
+                try:
+                    body = sel_path.read_text(encoding="utf-8").strip()
+                    if not body:
+                        body = '{"hasSelection":false}'
+                    obj = json.loads(body)
+                    self._json(200, obj)
+                    return
+                except Exception as e:  # noqa: BLE001
+                    self._json(200, {"hasSelection": False, "error": str(e)})
+                    return
+            self._json(200, {"hasSelection": False})
+            return
+        self._json(404, {"error": "not found"})
 
     # ---- POST /apply ----
     def do_POST(self) -> None:  # noqa: N802

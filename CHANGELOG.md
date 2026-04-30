@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.4.0 — 2026-04-30
+
+### Sub-object polygon assignment
+Теперь можно применять материал на **выделенные грани**, а не на весь объект.
+
+- В `apply_template.ms` детект `polyop.getFaceSelection` (Editable_Poly) и `getFaceSelection` (Editable_Mesh).
+- Если есть face-selection — материал заворачивается в **Multi/Sub-Object**, наш HG-слот получает следующий matID, селектные грани переключаются на этот ID.
+- Idempotent: повторное применение **заменяет** существующий HG-слот, не плодит новые.
+- Modifier-стек (Tessellate/UVWMap/Displace) применяется только в object-режиме — Displace в Max не фильтруется по граням, для деформации только выбранных рекомендуется `Detach`.
+- Web: новый `select` «Режим применения»: **Авто** (по выделению) / **Только объект** / **Только грани**.
+
+### Bidirectional channel — Max → web
+Веб-приложение теперь видит, что выделено в Max:
+
+- `MaxBridge.ms` подписывается на `#selectionSetChanged` и пишет JSON-снапшот в `%TEMP%/HeightmapGen/selection.json` (имя, класс, bbox, size, выделенные грани, system unit).
+- В сервере новый `GET /selection`.
+- Web каждую секунду опрашивает; в правой панели — карточка с именем объекта, габаритами, бейджем количества граней.
+- Кнопка **«📐 Подобрать по bbox»** под слайдером Displace strength — ставит 2% от наименьшей стороны bbox (типичное правило для архитектурного displacement).
+
+### .exe-сборка bridge через PyInstaller
+- `bridge/HeightmapGenBridge.spec` — onedir-конфиг с включением `apply_template.ms` и `MaxBridge.ms`.
+- `.github/workflows/build-bridge.yml` — на каждый тег `v*` собирает `HeightmapGenBridge-windows.zip` (на `windows-latest`) и аплоадит в release.
+- `server.py` — теперь поддерживает `sys._MEIPASS` (находит template и в bundled, и в dev режиме).
+- В `bridge/README.md` описан вариант A (готовый .exe, без Python) и вариант B (исходники).
+
 ## v0.3.1 — 2026-04-30
 
 ### Bug fix: idempotent apply

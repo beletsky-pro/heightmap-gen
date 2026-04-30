@@ -35,6 +35,19 @@ export interface BridgeApplyConfig {
   applyMaterial?: boolean;
   /** Имя материала. По умолчанию "HeightmapGen". */
   materialName?: string;
+  /** "auto" (по face-selection), "object" (всегда весь объект), "faces" (только грани). */
+  applyMode?: 'auto' | 'object' | 'faces';
+}
+
+export interface BridgeSelection {
+  hasSelection: boolean;
+  name?: string;
+  class?: string;
+  bboxMin?: [number, number, number];
+  bboxMax?: [number, number, number];
+  size?: [number, number, number];
+  selectedFaces?: number;
+  unit?: string;
 }
 
 export interface BridgeApplyResponse {
@@ -57,6 +70,20 @@ export class MaxBridge {
       return { online: true, version: j.version };
     } catch (e) {
       return { online: false, error: (e as Error).message };
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async selection(timeoutMs = 1500): Promise<BridgeSelection> {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const r = await fetch(`${this.host}/selection`, { signal: ctl.signal });
+      if (!r.ok) return { hasSelection: false };
+      return await r.json();
+    } catch {
+      return { hasSelection: false };
     } finally {
       clearTimeout(t);
     }

@@ -12,7 +12,7 @@
     encodeRgbaPng,
     type ExportBitDepth,
   } from './core/export';
-  import { MaxBridge, blobToDataUrl, type BridgeStatus } from './core/maxBridge';
+  import { MaxBridge, blobToDataUrl, type BridgeStatus, type BridgeSelection } from './core/maxBridge';
   import { concrete } from './materials/concrete';
   import { plaster } from './materials/plaster';
   import { stone } from './materials/stone';
@@ -70,6 +70,8 @@
   let bridgeAddUVW = $state(true);
   let bridgeApplyMaterial = $state(true);
   let bridgeIncludeMask = $state(false);
+  let bridgeApplyMode = $state<'auto' | 'object' | 'faces'>('auto');
+  let bridgeSelection = $state<BridgeSelection>({ hasSelection: false });
 
   // Live mode — debounced auto-apply при любом изменении
   let bridgeLive = $state(false);
@@ -81,6 +83,26 @@
 
   async function pingBridge() {
     bridgeStatus = await bridge.ping();
+  }
+  async function pollSelection() {
+    if (!bridgeStatus.online) return;
+    bridgeSelection = await bridge.selection();
+  }
+
+  /**
+   * Эвристика: по размеру bbox выбрать «адекватный» displacement strength.
+   * 2% от наименьшей стороны bbox — даёт заметный, но не разрывающий рельеф.
+   */
+  function suggestedDisplaceFromBBox(): number | undefined {
+    const sz = bridgeSelection.size;
+    if (!sz) return undefined;
+    const minSide = Math.min(Math.abs(sz[0]), Math.abs(sz[1]), Math.abs(sz[2]));
+    if (!isFinite(minSide) || minSide <= 0) return undefined;
+    return Math.max(0.01, Number((minSide * 0.02).toFixed(3)));
+  }
+  function applySuggestedDisplace() {
+    const v = suggestedDisplaceFromBBox();
+    if (v !== undefined) bridgeDisplaceScale = v;
   }
 
   $effect(() => {
@@ -155,6 +177,7 @@
     void bridgeAddUVW;
     void bridgeApplyMaterial;
     void bridgeIncludeMask;
+    void bridgeApplyMode;
     void bridgeLive;
     if (bridgeLive && bridgeStatus.online) untrack(() => scheduleLiveApply());
   });
@@ -196,12 +219,14 @@
     ro.observe(previewCanvas);
     preview.resize();
     regenerate();
-    // Bridge: пинг при загрузке + раз в 5 сек
+    // Bridge: пинг при загрузке + раз в 5 сек, селекшен раз в 1 сек
     pingBridge();
-    const pingId = setInterval(pingBridge, 5000);
+    const pingId = setInterval(async () => { await pingBridge(); }, 5000);
+    const selId = setInterval(pollSelection, 1000);
     return () => {
       ro.disconnect();
       clearInterval(pingId);
+      clearInterval(selId);
     };
   });
 
@@ -310,6 +335,7 @@
         addUVW: bridgeAddUVW,
         applyMaterial: bridgeApplyMaterial,
         materialName: `HeightmapGen_${currentDef.id}`,
+        applyMode: bridgeApplyMode,
       });
       const ms = Math.round(performance.now() - t0);
       bridgeMsg = silent ? `Live ${size}px — ${ms}мс` : `Готово за ${ms}мс — session ${resp.session}`;
@@ -565,10 +591,46 @@
         {/if}
       </div>
 
+      {#if bridgeStatus.online}
+        <div class="sel-card" class:has-sel={bridgeSelection.hasSelection}>
+          {#if bridgeSelection.hasSelection}
+            <div class="sel-name">
+              <span class="muted">Выделено:</span>
+              <strong>{bridgeSelection.name}</strong>
+            </div>
+            {#if bridgeSelection.size}
+              <div class="sel-bbox">
+                <code>{bridgeSelection.size[0].toFixed(1)} × {bridgeSelection.size[1].toFixed(1)} × {bridgeSelection.size[2].toFixed(1)}</code>
+                <span class="muted">{bridgeSelection.unit ?? ''}</span>
+              </div>
+            {/if}
+            {#if (bridgeSelection.selectedFaces ?? 0) > 0}
+              <div class="sel-faces">
+                <span class="badge">{bridgeSelection.selectedFaces} граней выделено</span>
+              </div>
+            {/if}
+          {:else}
+            <span class="muted">Объект не выделен в Max</span>
+          {/if}
+        </div>
+      {/if}
+
+      <label for="apply-mode" class="muted" style="margin-top:6px;">Режим применения</label>
+      <select id="apply-mode" bind:value={bridgeApplyMode}>
+        <option value="auto">Авто (по выделению граней)</option>
+        <option value="object">Только объект целиком</option>
+        <option value="faces">Только выделенные грани</option>
+      </select>
+
       <ParamSlider
-        spec={{ key: 'dispScale', label: 'Displace strength', min: 0.1, max: 20, step: 0.1, default: 1.5, uniform: '' }}
+        spec={{ key: 'dispScale', label: 'Displace strength', min: 0.01, max: 50, step: 0.01, default: 1.5, uniform: '' }}
         bind:value={bridgeDisplaceScale}
       />
+      {#if bridgeSelection.hasSelection && suggestedDisplaceFromBBox() !== undefined}
+        <button class="suggest-btn" onclick={applySuggestedDisplace} title="2% от наименьшей стороны bbox">
+          📐 Подобрать по bbox: {suggestedDisplaceFromBBox()?.toFixed(2)} {bridgeSelection.unit ?? ''}
+        </button>
+      {/if}
       <ParamSlider
         spec={{ key: 'tessIters', label: 'Tessellate итераций', min: 0, max: 4, step: 1, default: 2, uniform: '' }}
         bind:value={bridgeTessellate}
@@ -879,6 +941,54 @@
     background: var(--primary);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 30%, transparent);
     animation: pulse 1s ease-in-out infinite;
+  }
+
+  .sel-card {
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    background: var(--input-bg);
+    border: 1px dashed var(--panel-border);
+    margin-bottom: 12px;
+    font-size: var(--font-sm);
+  }
+  .sel-card.has-sel {
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--primary) 40%, transparent);
+  }
+  .sel-name { display: flex; gap: 6px; align-items: baseline; }
+  .sel-name strong { font-weight: 600; }
+  .sel-bbox {
+    margin-top: 4px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: var(--font-xs);
+  }
+  .sel-bbox code {
+    background: var(--bg-canvas);
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+  }
+  .sel-faces { margin-top: 6px; }
+  .badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    color: var(--accent);
+    font-size: var(--font-xs);
+    font-weight: 500;
+  }
+  .muted { color: var(--fg-muted); }
+  .suggest-btn {
+    width: 100%;
+    margin-top: -4px;
+    margin-bottom: 12px;
+    font-size: var(--font-xs);
+    padding: 6px 10px;
+    background: color-mix(in srgb, var(--primary) 10%, var(--input-bg));
+    color: var(--primary);
+  }
+  .suggest-btn:hover {
+    background: color-mix(in srgb, var(--primary) 20%, var(--input-bg));
   }
   .hints {
     font-size: var(--font-sm);

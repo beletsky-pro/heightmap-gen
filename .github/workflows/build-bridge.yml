@@ -1,0 +1,51 @@
+name: Build bridge .exe
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller==6.10.0
+
+      - name: Build bridge
+        working-directory: bridge
+        run: pyinstaller --clean --noconfirm HeightmapGenBridge.spec
+
+      - name: Pack zip
+        working-directory: bridge
+        shell: pwsh
+        run: |
+          # README + MaxBridge.ms идут рядом с .exe для удобства пользователя
+          Copy-Item README.md dist\HeightmapGenBridge\
+          Copy-Item MaxBridge.ms dist\HeightmapGenBridge\
+          Compress-Archive -Path dist\HeightmapGenBridge\* -DestinationPath HeightmapGenBridge-windows.zip -Force
+
+      - name: Upload as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HeightmapGenBridge-windows
+          path: bridge/HeightmapGenBridge-windows.zip
+          retention-days: 30
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bridge/HeightmapGenBridge-windows.zip

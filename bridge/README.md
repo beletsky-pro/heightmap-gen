@@ -21,7 +21,11 @@ http://...github.io                127.0.0.1:7878                  3ds Max 2026
 
 ## Установка
 
-### 1. Python-сервер (одноразово)
+### Вариант A — готовый .exe (без Python)
+
+Скачай `HeightmapGenBridge-windows.zip` со страницы релиза. Распакуй куда удобно. Дважды кликни `HeightmapGenBridge.exe`. Перейди к шагу 2.
+
+### Вариант B — из исходников (нужен Python 3.8+)
 
 Распакуй папку `bridge/` куда удобно, например `D:\HeightmapGenBridge\`. Дважды кликни `run.cmd`. Откроется консольное окно:
 
@@ -34,7 +38,7 @@ assets: C:\Users\you\AppData\Local\Temp\HeightmapGen\assets
 
 Окно нужно держать открытым пока работаешь. Можно свернуть.
 
-### 2. MAXScript-watcher в 3ds Max (одноразово)
+### Шаг 2 — MAXScript-watcher в 3ds Max (одноразово)
 
 Открой 3ds Max → меню **Scripting → Run Script…** → выбери `bridge\MaxBridge.ms`. В Listener'е появится:
 ```
