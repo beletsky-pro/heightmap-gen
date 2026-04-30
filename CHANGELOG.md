@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.3.0 — 2026-04-30
+
+### 3ds Max Bridge — применение в один клик
+
+Новая возможность: из веб-приложения отправлять сгенерированные карты в **запущенный 3ds Max 2026** одной кнопкой. Все 5–6 PNG доезжают за миллисекунды, на выделенный объект ложится Physical Material + стек `Tessellate → UVWMap → Displace`.
+
+**Архитектура (в новой папке `bridge/`):**
+1. `server.py` — Python HTTP-сервер на `127.0.0.1:7878` (только stdlib). Принимает POST с base64-PNG, кладёт PNG в `%TEMP%/HeightmapGen/assets/<id>/`, генерирует `.ms` из `apply_template.ms` в `%TEMP%/HeightmapGen/queue/`.
+2. `MaxBridge.ms` — MAXScript внутри 3ds Max. WinForms Timer (UI-поток) каждые 500 мс опрашивает очередь, `fileIn` найденного `.ms`, удаляет.
+3. `apply_template.ms` — шаблон применения: `PhysicalMaterial` (base color + Normal_Bump → normal map + Roughness map) + `Tessellate` + `UVWMap shrinkwrap` + `Displace`. Зеркалит архитектуру `ConcreteMoldTexture.ms`.
+
+**Web-сторона:**
+- Новый `src/core/maxBridge.ts` — клиент.
+- В topbar — pill-индикатор «Bridge offline / Max Bridge» с pulsing dot. Пинг каждые 5 сек.
+- В правой панели — секция «3ds Max Bridge» с настройками: `Displace strength`, `Tessellate итераций`, `UVWMap shrinkwrap`, `PhysicalMaterial`, `Включить B&W mask`.
+- Кнопка **«⚡ Применить в 3ds Max»** активна только когда bridge online.
+
+**Установка** (см. `bridge/README.md`):
+- Распаковать `bridge/` куда удобно
+- Запустить `run.cmd` (нужен Python 3.8+ в PATH)
+- В Max: Scripting → Run Script → `MaxBridge.ms` (опционально — копировать в `Startup/` для автозагрузки)
+
+**Безопасность:** сервер слушает только `127.0.0.1`, недоступен из локальной сети. CORS открытый — работает и с GitHub Pages, и с локальным dev.
+
 ## v0.2.0 — 2026-04-30
 
 Большой UI-апдейт.

@@ -8,8 +8,11 @@
   import {
     exportHeightmap,
     exportDerivedRGBA,
+    encodeHeightmapPng,
+    encodeRgbaPng,
     type ExportBitDepth,
   } from './core/export';
+  import { MaxBridge, blobToDataUrl, type BridgeStatus } from './core/maxBridge';
   import { concrete } from './materials/concrete';
   import { plaster } from './materials/plaster';
   import { stone } from './materials/stone';
@@ -56,6 +59,21 @@
   let baseColor = $state('#cccccc');
   let materialRoughness = $state(0.85);
   let materialMetalness = $state(0.0);
+
+  // 3ds Max Bridge
+  const bridge = new MaxBridge();
+  let bridgeStatus = $state<BridgeStatus>({ online: false });
+  let bridgeBusy = $state(false);
+  let bridgeMsg = $state('');
+  let bridgeDisplaceScale = $state(1.5);
+  let bridgeTessellate = $state(2);
+  let bridgeAddUVW = $state(true);
+  let bridgeApplyMaterial = $state(true);
+  let bridgeIncludeMask = $state(false);
+
+  async function pingBridge() {
+    bridgeStatus = await bridge.ping();
+  }
 
   $effect(() => {
     preview?.setBaseColor(baseColor);
@@ -147,7 +165,13 @@
     ro.observe(previewCanvas);
     preview.resize();
     regenerate();
-    return () => ro.disconnect();
+    // Bridge: пинг при загрузке + раз в 5 сек
+    pingBridge();
+    const pingId = setInterval(pingBridge, 5000);
+    return () => {
+      ro.disconnect();
+      clearInterval(pingId);
+    };
   });
 
   onDestroy(() => {
@@ -208,6 +232,63 @@
   }
 
   /**
+   * Применить текущие карты в запущенный 3ds Max через локальный bridge.
+   * Перерендеривает на exportSize, кодирует все карты в data URL и POST'ит на 127.0.0.1:7878.
+   */
+  async function applyToMax() {
+    if (!noiseRenderer || bridgeBusy) return;
+    if (!bridgeStatus.online) {
+      bridgeMsg = 'Bridge offline. Запустите server.py.';
+      return;
+    }
+    bridgeBusy = true;
+    bridgeMsg = `Кодирование ${exportSize}×${exportSize}…`;
+    try {
+      const t0 = performance.now();
+      const { height } = generateHeight(noiseRenderer, currentDef, currentValues, exportSize, postSet);
+      const d = generateDerived(noiseRenderer, height, derivedSet);
+      const m = generateMask(noiseRenderer, height, maskSet);
+
+      const heightField = noiseRenderer.readHeightField(height);
+      const heightBlob16 = encodeHeightmapPng(heightField, height.width, 16);
+      const heightBlob8  = encodeHeightmapPng(heightField, height.width, 8);
+      const normalBlob = encodeRgbaPng(noiseRenderer.readRGBA(d.normal), d.normal.width, true);
+      const aoBlob = encodeRgbaPng(noiseRenderer.readRGBA(d.ao), d.ao.width, true);
+      const roughBlob = encodeRgbaPng(noiseRenderer.readRGBA(d.roughness), d.roughness.width, true);
+      const maskBlob = bridgeIncludeMask ? encodeRgbaPng(noiseRenderer.readRGBA(m), m.width, true) : null;
+
+      height.dispose();
+      d.normal.dispose();
+      d.ao.dispose();
+      d.roughness.dispose();
+      m.dispose();
+
+      bridgeMsg = 'Отправка в Max…';
+      const maps = {
+        height16: await blobToDataUrl(heightBlob16),
+        height8:  await blobToDataUrl(heightBlob8),
+        normal:   await blobToDataUrl(normalBlob),
+        ao:       await blobToDataUrl(aoBlob),
+        roughness:await blobToDataUrl(roughBlob),
+        ...(maskBlob ? { mask: await blobToDataUrl(maskBlob) } : {}),
+      };
+      const resp = await bridge.apply(maps, {
+        displacementScale: bridgeDisplaceScale,
+        tessellate: bridgeTessellate,
+        addUVW: bridgeAddUVW,
+        applyMaterial: bridgeApplyMaterial,
+        materialName: `HeightmapGen_${currentDef.id}`,
+      });
+      const ms = Math.round(performance.now() - t0);
+      bridgeMsg = `Готово за ${ms}мс — session ${resp.session}`;
+    } catch (e) {
+      bridgeMsg = `Ошибка: ${(e as Error).message}`;
+    } finally {
+      bridgeBusy = false;
+    }
+  }
+
+  /**
    * Любой экспорт рендерит heightmap в полном `exportSize` (а не preview),
    * считает derived и маску на этом разрешении, прогоняет колбэк, dispose.
    */
@@ -253,6 +334,10 @@
       </div>
     </div>
     <div class="topbar-right">
+      <div class="bridge-pill" class:online={bridgeStatus.online} title={bridgeStatus.online ? `Bridge ${bridgeStatus.version ?? 'OK'}` : 'Bridge offline — запусти bridge/run.cmd'}>
+        <span class="dot"></span>
+        <span class="lbl">{bridgeStatus.online ? 'Max Bridge' : 'Bridge offline'}</span>
+      </div>
       <a class="ghost-link" href="https://github.com/beletsky-pro/heightmap-gen" target="_blank" rel="noopener" aria-label="GitHub">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.07 3.29 9.37 7.86 10.89.58.11.79-.25.79-.56v-2.18c-3.2.7-3.87-1.36-3.87-1.36-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.25 3.34.96.1-.74.4-1.25.72-1.54-2.55-.29-5.24-1.27-5.24-5.66 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.16 1.17.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.2-1.48 3.16-1.17 3.16-1.17.62 1.57.23 2.73.11 3.02.74.8 1.18 1.82 1.18 3.07 0 4.4-2.69 5.36-5.25 5.65.41.36.78 1.06.78 2.14v3.18c0 .31.21.68.8.56 4.57-1.52 7.86-5.82 7.86-10.89C23.5 5.65 18.35.5 12 .5z"/></svg>
       </a>
@@ -407,6 +492,49 @@
         <p class="status">{exportStatus}</p>
       {/if}
 
+      <h2 class="section-heading">3ds Max Bridge</h2>
+      <div class="bridge-card" class:online={bridgeStatus.online}>
+        <div class="bridge-status">
+          <span class="dot"></span>
+          {#if bridgeStatus.online}
+            <span>Подключено · v{bridgeStatus.version ?? '?'}</span>
+          {:else}
+            <span>Helper не запущен</span>
+          {/if}
+        </div>
+        {#if !bridgeStatus.online}
+          <p class="bridge-help">Запустите <code>bridge/run.cmd</code> и подгрузите <code>MaxBridge.ms</code> в 3ds Max. <a href="https://github.com/beletsky-pro/heightmap-gen/tree/main/bridge" target="_blank" rel="noopener">Инструкция</a>.</p>
+        {/if}
+      </div>
+
+      <ParamSlider
+        spec={{ key: 'dispScale', label: 'Displace strength', min: 0.1, max: 20, step: 0.1, default: 1.5, uniform: '' }}
+        bind:value={bridgeDisplaceScale}
+      />
+      <ParamSlider
+        spec={{ key: 'tessIters', label: 'Tessellate итераций', min: 0, max: 4, step: 1, default: 2, uniform: '' }}
+        bind:value={bridgeTessellate}
+      />
+      <label class="check">
+        <input type="checkbox" bind:checked={bridgeAddUVW} />
+        UVWMap shrinkwrap
+      </label>
+      <label class="check">
+        <input type="checkbox" bind:checked={bridgeApplyMaterial} />
+        PhysicalMaterial (bump + roughness)
+      </label>
+      <label class="check">
+        <input type="checkbox" bind:checked={bridgeIncludeMask} />
+        Включить B&W mask
+      </label>
+
+      <button class="primary big" disabled={!bridgeStatus.online || bridgeBusy} onclick={applyToMax} style="margin-top:10px;">
+        ⚡ Применить в 3ds Max
+      </button>
+      {#if bridgeMsg}
+        <p class="status">{bridgeMsg}</p>
+      {/if}
+
       <h2 class="section-heading">Подсказки для 3ds Max</h2>
       <ol class="hints">
         <li>Height 16-bit → Bitmap (галка «16-bit») → Displace модификатор.</li>
@@ -458,6 +586,41 @@
     transition: background var(--transition-fast), color var(--transition-fast);
   }
   .ghost-link:hover { background: var(--input-bg-hover); color: var(--fg); }
+
+  .bridge-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: var(--radius-full);
+    background: var(--input-bg);
+    font-size: var(--font-xs);
+    font-weight: 500;
+    color: var(--fg-muted);
+    cursor: default;
+    user-select: none;
+  }
+  .bridge-pill .dot {
+    width: 8px; height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--danger);
+    flex-shrink: 0;
+    box-shadow: 0 0 0 0 transparent;
+    transition: background var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .bridge-pill.online {
+    color: var(--fg);
+    background: color-mix(in srgb, var(--success) 15%, transparent);
+  }
+  .bridge-pill.online .dot {
+    background: var(--success);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 25%, transparent);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 35%, transparent); }
+    50%      { box-shadow: 0 0 0 6px color-mix(in srgb, var(--success) 0%,  transparent); }
+  }
 
   main {
     display: grid;
@@ -579,6 +742,45 @@
     background: var(--input-bg);
     border-radius: var(--radius-sm);
   }
+  .bridge-card {
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    background: var(--input-bg);
+    border: 1px solid var(--panel-border);
+    margin-bottom: 12px;
+  }
+  .bridge-card.online { border-color: color-mix(in srgb, var(--success) 50%, transparent); }
+  .bridge-status {
+    display: flex; align-items: center; gap: 8px;
+    font-size: var(--font-sm);
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .bridge-card .dot {
+    width: 8px; height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--danger);
+    flex-shrink: 0;
+  }
+  .bridge-card.online .dot { background: var(--success); }
+  .bridge-help {
+    margin: 6px 0 0;
+    font-size: var(--font-xs);
+    color: var(--fg-muted);
+    line-height: 1.5;
+  }
+  .bridge-help code {
+    background: var(--bg-canvas);
+    padding: 1px 4px;
+    border-radius: var(--radius-xs);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+  }
+  .bridge-help a {
+    color: var(--primary);
+    text-decoration: none;
+  }
+  .bridge-help a:hover { text-decoration: underline; }
   .hints {
     font-size: var(--font-sm);
     color: var(--fg-muted);
