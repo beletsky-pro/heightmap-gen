@@ -22,6 +22,7 @@
   import ParamSlider from './ui/ParamSlider.svelte';
   import PresetMenu from './ui/PresetMenu.svelte';
   import MapThumbnail from './ui/MapThumbnail.svelte';
+  import ThemeToggle from './ui/ThemeToggle.svelte';
 
   const materials: MaterialDef[] = [concrete, plaster, stone, lines, waves, ribs];
   let selectedId = $state('concrete');
@@ -238,236 +239,362 @@
   }
 </script>
 
-<main>
-  <aside class="left">
-    <h1>Heightmap Gen</h1>
-    <p class="sub">Генератор текстур для 3ds Max</p>
-
-    <h2>Материал</h2>
-    <MaterialPicker {materials} bind:selected={selectedId} />
-
-    <PresetMenu presets={currentDef.presets} onpick={onPreset} />
-
-    <h2>Параметры материала</h2>
-    {#each currentDef.params as p (p.key)}
-      <ParamSlider spec={p} bind:value={paramsByMaterial[selectedId][p.key]} />
-    {/each}
-
-    <button onclick={randomSeed} style="width:100%;margin-top:8px;">🎲 Случайный seed</button>
-
-    <h2>Карта displacement</h2>
-    <ParamSlider
-      spec={{ key: 'mapContrast', label: 'Контраст', min: 0.5, max: 4, step: 0.05, default: 1, uniform: '' }}
-      bind:value={postSet.contrast}
-    />
-    <ParamSlider
-      spec={{ key: 'mapGamma', label: 'Гамма', min: 0.3, max: 3, step: 0.05, default: 1, uniform: '' }}
-      bind:value={postSet.gamma}
-    />
-    <label class="check">
-      <input type="checkbox" bind:checked={postSet.invert} />
-      Инвертировать (выпуклое ↔ вогнутое)
-    </label>
-    <button style="width:100%;margin-top:8px;" onclick={() => { postSet.contrast = 1; postSet.gamma = 1; postSet.binarize = 0; postSet.invert = false; }}>Сброс контраста</button>
-
-    <h2>B&W маска (отдельный output)</h2>
-    <ParamSlider
-      spec={{ key: 'maskThreshold', label: 'Порог', min: 0, max: 1, step: 0.01, default: 0.5, uniform: '' }}
-      bind:value={maskSet.threshold}
-    />
-    <ParamSlider
-      spec={{ key: 'maskSoftness', label: 'Мягкость края', min: 0, max: 1, step: 0.01, default: 0, uniform: '' }}
-      bind:value={maskSet.softness}
-    />
-    <label class="check">
-      <input type="checkbox" bind:checked={maskSet.invert} />
-      Инвертировать маску
-    </label>
-
-    <h2>Деривация карт</h2>
-    <ParamSlider
-      spec={{ key: 'normalStrength', label: 'Normal сила', min: 0.5, max: 12, step: 0.1, default: 4, uniform: '' }}
-      bind:value={derivedSet.normalStrength}
-    />
-    <ParamSlider
-      spec={{ key: 'aoStrength', label: 'AO сила', min: 0.5, max: 8, step: 0.1, default: 3, uniform: '' }}
-      bind:value={derivedSet.aoStrength}
-    />
-    <ParamSlider
-      spec={{ key: 'roughnessBase', label: 'Roughness base', min: 0.2, max: 1, step: 0.01, default: 0.7, uniform: '' }}
-      bind:value={derivedSet.roughnessBase}
-    />
-    <ParamSlider
-      spec={{ key: 'roughnessDetail', label: 'Roughness detail', min: 0, max: 12, step: 0.1, default: 4, uniform: '' }}
-      bind:value={derivedSet.roughnessDetail}
-    />
-    <label class="check">
-      <input type="checkbox" bind:checked={derivedSet.flipY} />
-      Normal: DirectX (Y inverted)
-    </label>
-
-    <h2>Экспорт</h2>
-    <label for="exp-size">Размер</label>
-    <select id="exp-size" bind:value={exportSize}>
-      <option value={1024}>1024 × 1024</option>
-      <option value={2048}>2048 × 2048</option>
-      <option value={4096}>4096 × 4096</option>
-    </select>
-
-    <p class="caps">{capsInfo}</p>
-  </aside>
-
-  <section class="center">
-    <canvas bind:this={previewCanvas}></canvas>
-    <div class="overlay-bar">
-      <div class="toggle">
-        <button class:active={shape === 'plane'} onclick={() => setShape('plane')}>Плоскость</button>
-        <button class:active={shape === 'box'} onclick={() => setShape('box')}>Куб</button>
-        <button class:active={shape === 'cylinder'} onclick={() => setShape('cylinder')}>Цилиндр</button>
-        <button class:active={shape === 'sphere'} onclick={() => setShape('sphere')}>Сфера</button>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 18l4-7 4 4 5-9 5 12"/>
+        </svg>
       </div>
-      <div class="toggle">
-        <button class:active={tileRepeat === 1} onclick={() => setTile(1)}>1×1</button>
-        <button class:active={tileRepeat === 2} onclick={() => setTile(2)}>2×2</button>
-        <button class:active={tileRepeat === 4} onclick={() => setTile(4)}>4×4</button>
+      <div class="title">
+        <h1>Heightmap Gen</h1>
+        <p>Генератор текстур для 3ds Max</p>
       </div>
     </div>
-  </section>
+    <div class="topbar-right">
+      <a class="ghost-link" href="https://github.com/beletsky-pro/heightmap-gen" target="_blank" rel="noopener" aria-label="GitHub">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.07 3.29 9.37 7.86 10.89.58.11.79-.25.79-.56v-2.18c-3.2.7-3.87-1.36-3.87-1.36-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.25 3.34.96.1-.74.4-1.25.72-1.54-2.55-.29-5.24-1.27-5.24-5.66 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.16 1.17.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.2-1.48 3.16-1.17 3.16-1.17.62 1.57.23 2.73.11 3.02.74.8 1.18 1.82 1.18 3.07 0 4.4-2.69 5.36-5.25 5.65.41.36.78 1.06.78 2.14v3.18c0 .31.21.68.8.56 4.57-1.52 7.86-5.82 7.86-10.89C23.5 5.65 18.35.5 12 .5z"/></svg>
+      </a>
+      <ThemeToggle />
+    </div>
+  </header>
 
-  <aside class="right">
-    <h2>Превью</h2>
-    <div class="preview-controls">
-      <div class="color-row">
-        <label for="basecolor">Цвет</label>
-        <input id="basecolor" type="color" bind:value={baseColor} />
-        <span class="hex">{baseColor}</span>
-      </div>
+  <main>
+    <aside class="left">
+      <h2 class="section-heading">Материал</h2>
+      <MaterialPicker {materials} bind:selected={selectedId} />
+
+      <PresetMenu presets={currentDef.presets} onpick={onPreset} />
+
+      <h2 class="section-heading">Параметры материала</h2>
+      {#each currentDef.params as p (p.key)}
+        <ParamSlider spec={p} bind:value={paramsByMaterial[selectedId][p.key]} />
+      {/each}
+
+      <button onclick={randomSeed} style="width:100%;margin-top:6px;">🎲 Случайный seed</button>
+
+      <h2 class="section-heading">Карта displacement</h2>
       <ParamSlider
-        spec={{ key: 'matRough', label: 'Глянцевость (низ ↔ матово)', min: 0, max: 1, step: 0.01, default: 0.85, uniform: '' }}
-        bind:value={materialRoughness}
+        spec={{ key: 'mapContrast', label: 'Контраст', min: 0.5, max: 4, step: 0.05, default: 1, uniform: '' }}
+        bind:value={postSet.contrast}
       />
       <ParamSlider
-        spec={{ key: 'matMetal', label: 'Металл', min: 0, max: 1, step: 0.01, default: 0, uniform: '' }}
-        bind:value={materialMetalness}
+        spec={{ key: 'mapGamma', label: 'Гамма', min: 0.3, max: 3, step: 0.05, default: 1, uniform: '' }}
+        bind:value={postSet.gamma}
       />
       <label class="check">
-        <input type="checkbox" bind:checked={bwPreview} />
-        Чёрно-белый предпросмотр (только displacement)
+        <input type="checkbox" bind:checked={postSet.invert} />
+        Инвертировать (выпуклое ↔ вогнутое)
       </label>
-    </div>
+      <button style="width:100%;margin-top:10px;" onclick={() => { postSet.contrast = 1; postSet.gamma = 1; postSet.binarize = 0; postSet.invert = false; }}>Сброс контраста</button>
 
-    <h2>Карты</h2>
-    <div class="thumbs">
-      <MapThumbnail target={heightTarget} renderer={preview?.renderer} label="Height" onclick={() => downloadHeight(16)} />
-      <MapThumbnail target={normalTarget} renderer={preview?.renderer} label="Normal" onclick={() => downloadDerived('normal')} />
-      <MapThumbnail target={aoTarget} renderer={preview?.renderer} label="AO" onclick={() => downloadDerived('ao')} />
-      <MapThumbnail target={roughnessTarget} renderer={preview?.renderer} label="Roughness" onclick={() => downloadDerived('roughness')} />
-      <MapThumbnail target={maskTarget} renderer={preview?.renderer} label="B&W маска" onclick={downloadMask} />
-    </div>
+      <h2 class="section-heading">B&W маска</h2>
+      <ParamSlider
+        spec={{ key: 'maskThreshold', label: 'Порог', min: 0, max: 1, step: 0.01, default: 0.5, uniform: '' }}
+        bind:value={maskSet.threshold}
+      />
+      <ParamSlider
+        spec={{ key: 'maskSoftness', label: 'Мягкость края', min: 0, max: 1, step: 0.01, default: 0, uniform: '' }}
+        bind:value={maskSet.softness}
+      />
+      <label class="check">
+        <input type="checkbox" bind:checked={maskSet.invert} />
+        Инвертировать маску
+      </label>
 
-    <h2>Скачать</h2>
+      <h2 class="section-heading">Деривация карт</h2>
+      <ParamSlider
+        spec={{ key: 'normalStrength', label: 'Normal сила', min: 0.5, max: 12, step: 0.1, default: 4, uniform: '' }}
+        bind:value={derivedSet.normalStrength}
+      />
+      <ParamSlider
+        spec={{ key: 'aoStrength', label: 'AO сила', min: 0.5, max: 8, step: 0.1, default: 3, uniform: '' }}
+        bind:value={derivedSet.aoStrength}
+      />
+      <ParamSlider
+        spec={{ key: 'roughnessBase', label: 'Roughness base', min: 0.2, max: 1, step: 0.01, default: 0.7, uniform: '' }}
+        bind:value={derivedSet.roughnessBase}
+      />
+      <ParamSlider
+        spec={{ key: 'roughnessDetail', label: 'Roughness detail', min: 0, max: 12, step: 0.1, default: 4, uniform: '' }}
+        bind:value={derivedSet.roughnessDetail}
+      />
+      <label class="check">
+        <input type="checkbox" bind:checked={derivedSet.flipY} />
+        Normal: DirectX (Y inverted)
+      </label>
 
-    <button class="primary big" disabled={exportBusy} onclick={downloadAll}>
-      ⬇ Все карты (6 файлов)
-    </button>
+      <h2 class="section-heading">Экспорт</h2>
+      <label for="exp-size">Размер</label>
+      <select id="exp-size" bind:value={exportSize}>
+        <option value={1024}>1024 × 1024</option>
+        <option value={2048}>2048 × 2048</option>
+        <option value={4096}>4096 × 4096</option>
+      </select>
 
-    <div class="dl-row">
-      <button disabled={exportBusy} onclick={() => downloadHeight(16)}>Height 16-bit</button>
-      <button disabled={exportBusy} onclick={() => downloadHeight(8)}>Height 8-bit</button>
-    </div>
-    <div class="dl-row">
-      <button disabled={exportBusy} onclick={() => downloadDerived('normal')}>Normal</button>
-      <button disabled={exportBusy} onclick={() => downloadDerived('ao')}>AO</button>
-    </div>
-    <div class="dl-row">
-      <button disabled={exportBusy} onclick={() => downloadDerived('roughness')}>Roughness</button>
-      <button disabled={exportBusy} onclick={downloadMask}>B&W mask</button>
-    </div>
+      <p class="caps">{capsInfo}</p>
+    </aside>
 
-    {#if exportStatus}
-      <p class="status">{exportStatus}</p>
-    {/if}
+    <section class="center">
+      <canvas bind:this={previewCanvas}></canvas>
+      <div class="overlay-bar">
+        <div class="seg" role="group" aria-label="Форма">
+          <button class:active={shape === 'plane'} onclick={() => setShape('plane')}>Плоскость</button>
+          <button class:active={shape === 'box'} onclick={() => setShape('box')}>Куб</button>
+          <button class:active={shape === 'cylinder'} onclick={() => setShape('cylinder')}>Цилиндр</button>
+          <button class:active={shape === 'sphere'} onclick={() => setShape('sphere')}>Сфера</button>
+        </div>
+        <div class="seg" role="group" aria-label="Tile">
+          <button class:active={tileRepeat === 1} onclick={() => setTile(1)}>1×1</button>
+          <button class:active={tileRepeat === 2} onclick={() => setTile(2)}>2×2</button>
+          <button class:active={tileRepeat === 4} onclick={() => setTile(4)}>4×4</button>
+        </div>
+      </div>
+    </section>
 
-    <h2>Подсказки для 3ds Max</h2>
-    <ol class="hints">
-      <li>Height 16-bit → Bitmap (галка «16-bit») → Displace модификатор.</li>
-      <li>Normal → Normal Bump map → Bump-слот Physical Material.</li>
-      <li>AO → Diffuse в режиме Multiply.</li>
-      <li>Roughness → Roughness-слот Physical Material.</li>
-      <li>B&W mask → Opacity / Cutout, или Stencil, или вход для смешивания материалов.</li>
-    </ol>
-  </aside>
-</main>
+    <aside class="right">
+      <h2 class="section-heading">Превью</h2>
+      <div class="preview-controls">
+        <div class="color-row">
+          <label for="basecolor">Цвет</label>
+          <input id="basecolor" type="color" bind:value={baseColor} />
+          <span class="hex">{baseColor}</span>
+        </div>
+        <ParamSlider
+          spec={{ key: 'matRough', label: 'Глянцевость (глянец ↔ мат)', min: 0, max: 1, step: 0.01, default: 0.85, uniform: '' }}
+          bind:value={materialRoughness}
+        />
+        <ParamSlider
+          spec={{ key: 'matMetal', label: 'Металличность', min: 0, max: 1, step: 0.01, default: 0, uniform: '' }}
+          bind:value={materialMetalness}
+        />
+        <label class="check">
+          <input type="checkbox" bind:checked={bwPreview} />
+          Чёрно-белый предпросмотр
+        </label>
+      </div>
+
+      <h2 class="section-heading">Карты</h2>
+      <div class="thumbs">
+        <MapThumbnail target={heightTarget} renderer={preview?.renderer} label="Height" onclick={() => downloadHeight(16)} />
+        <MapThumbnail target={normalTarget} renderer={preview?.renderer} label="Normal" onclick={() => downloadDerived('normal')} />
+        <MapThumbnail target={aoTarget} renderer={preview?.renderer} label="AO" onclick={() => downloadDerived('ao')} />
+        <MapThumbnail target={roughnessTarget} renderer={preview?.renderer} label="Roughness" onclick={() => downloadDerived('roughness')} />
+        <MapThumbnail target={maskTarget} renderer={preview?.renderer} label="B&W маска" onclick={downloadMask} />
+      </div>
+
+      <h2 class="section-heading">Скачать</h2>
+
+      <button class="primary big" disabled={exportBusy} onclick={downloadAll}>
+        Все карты (6 файлов)
+      </button>
+
+      <div class="dl-row">
+        <button disabled={exportBusy} onclick={() => downloadHeight(16)}>Height 16-bit</button>
+        <button disabled={exportBusy} onclick={() => downloadHeight(8)}>Height 8-bit</button>
+      </div>
+      <div class="dl-row">
+        <button disabled={exportBusy} onclick={() => downloadDerived('normal')}>Normal</button>
+        <button disabled={exportBusy} onclick={() => downloadDerived('ao')}>AO</button>
+      </div>
+      <div class="dl-row">
+        <button disabled={exportBusy} onclick={() => downloadDerived('roughness')}>Roughness</button>
+        <button disabled={exportBusy} onclick={downloadMask}>B&W mask</button>
+      </div>
+
+      {#if exportStatus}
+        <p class="status">{exportStatus}</p>
+      {/if}
+
+      <h2 class="section-heading">Подсказки для 3ds Max</h2>
+      <ol class="hints">
+        <li>Height 16-bit → Bitmap (галка «16-bit») → Displace модификатор.</li>
+        <li>Normal → Normal Bump map → Bump-слот Physical Material.</li>
+        <li>AO → Diffuse в режиме Multiply.</li>
+        <li>Roughness → Roughness-слот Physical Material.</li>
+        <li>B&W mask → Opacity / Cutout / Stencil / blend-маска.</li>
+      </ol>
+    </aside>
+  </main>
+</div>
 
 <style>
+  .app {
+    display: grid;
+    grid-template-rows: 56px 1fr;
+    height: 100dvh;
+    min-height: 100vh;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--panel-border);
+    background: var(--bg);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo {
+    width: 36px; height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    color: white;
+    box-shadow: var(--shadow-sm);
+  }
+  .title h1 { font-size: var(--font-lg); margin: 0; line-height: 1.1; font-weight: 600; }
+  .title p { margin: 0; font-size: var(--font-xs); color: var(--fg-muted); }
+  .topbar-right { display: inline-flex; align-items: center; gap: 8px; }
+  .ghost-link {
+    width: 34px; height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-muted);
+    border-radius: var(--radius-md);
+    transition: background var(--transition-fast), color var(--transition-fast);
+  }
+  .ghost-link:hover { background: var(--input-bg-hover); color: var(--fg); }
+
   main {
     display: grid;
-    grid-template-columns: 320px 1fr 280px;
-    height: 100%;
+    grid-template-columns: 320px 1fr 300px;
+    min-height: 0;
   }
   aside {
-    padding: 16px 16px 24px;
+    padding: 18px 18px 24px;
     overflow-y: auto;
-    background: #161616;
-    border-right: 1px solid #2a2a2a;
+    background: var(--panel);
+    border-right: 1px solid var(--panel-border);
+    min-height: 0;
   }
-  aside.right { border-right: none; border-left: 1px solid #2a2a2a; }
-  .center { position: relative; background: #222; }
-  canvas { width: 100%; height: 100%; display: block; }
-  h1 { font-size: 18px; margin: 0 0 2px; }
-  h2 {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #888;
-    margin: 18px 0 8px;
-    border-bottom: 1px solid #2a2a2a;
-    padding-bottom: 4px;
+  aside.right {
+    border-right: none;
+    border-left: 1px solid var(--panel-border);
   }
-  .sub { font-size: 12px; color: #888; margin: 0 0 12px; }
-  .caps { font-size: 11px; color: #666; margin-top: 16px; font-family: monospace; }
-  .check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #ccc; margin-top: 6px; cursor: pointer; }
-  .check input { width: auto; }
+
+  .center {
+    position: relative;
+    background: var(--bg-canvas);
+    overflow: hidden;
+    min-height: 0;
+  }
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
   .overlay-bar {
     position: absolute;
-    bottom: 16px;
     left: 50%;
+    bottom: 18px;
     transform: translateX(-50%);
     display: flex;
     gap: 8px;
+    z-index: 10;
+    pointer-events: auto;
   }
-  .toggle {
-    display: flex;
-    gap: 4px;
-    background: #1a1a1adb;
+  .seg {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
     padding: 4px;
-    border-radius: 6px;
-    backdrop-filter: blur(6px);
+    background: color-mix(in srgb, var(--bg-elevated) 85%, transparent);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-md);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: var(--shadow-md);
   }
-  .toggle button { padding: 6px 12px; font-size: 12px; }
-  .toggle button.active { background: #4a7fb5; border-color: #5a8fc5; }
+  .seg button {
+    padding: 6px 12px;
+    font-size: var(--font-sm);
+    background: transparent;
+    border-radius: var(--radius-sm);
+    color: var(--fg-muted);
+  }
+  .seg button:hover { background: var(--input-bg-hover); color: var(--fg); }
+  .seg button.active {
+    background: var(--primary);
+    color: var(--primary-fg);
+    box-shadow: var(--shadow-sm);
+  }
+  .seg button.active:hover { background: var(--primary-hover); }
+
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--font-sm);
+    color: var(--fg);
+    margin-top: 8px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 400;
+  }
+  .check input { width: auto; margin: 0; }
+
+  .preview-controls { margin-bottom: 4px; }
+  .color-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .color-row label { margin: 0; flex: 0 0 auto; }
+  .hex {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: var(--font-xs);
+    color: var(--fg-muted);
+  }
+
   .thumbs {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 10px;
     margin-bottom: 4px;
   }
-  .preview-controls { margin-bottom: 6px; }
-  .color-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+
+  button.big {
+    width: 100%;
+    padding: 12px;
+    font-size: var(--font-md);
     margin-bottom: 10px;
   }
-  .color-row label { margin: 0; flex: 0 0 auto; }
-  .color-row input[type="color"] {
-    width: 50px; height: 32px; padding: 0; border: 1px solid #444;
-    border-radius: 4px; cursor: pointer; background: transparent;
+  .dl-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 6px;
   }
-  .hex { font-family: monospace; font-size: 12px; color: #aaa; }
-  button.big { width: 100%; padding: 12px; font-size: 14px; margin-bottom: 10px; }
-  .dl-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
-  .status { font-size: 12px; color: #8aa; margin: 10px 0; }
-  .hints { font-size: 12px; color: #aaa; padding-left: 18px; line-height: 1.5; }
+  .status {
+    font-size: var(--font-sm);
+    color: var(--fg-muted);
+    margin: 12px 0;
+    padding: 8px 10px;
+    background: var(--input-bg);
+    border-radius: var(--radius-sm);
+  }
+  .hints {
+    font-size: var(--font-sm);
+    color: var(--fg-muted);
+    padding-left: 18px;
+    line-height: 1.55;
+    margin: 0;
+  }
   .hints li { margin-bottom: 4px; }
+  .caps {
+    font-size: var(--font-xs);
+    color: var(--fg-subtle);
+    margin-top: 14px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  @media (max-width: 1100px) {
+    main { grid-template-columns: 280px 1fr 260px; }
+  }
 </style>

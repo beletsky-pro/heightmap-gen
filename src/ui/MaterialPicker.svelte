@@ -19,7 +19,14 @@
 </div>
 
 <style>
-  .picker { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  button { padding: 10px 8px; font-size: 13px; }
-  button.active { background: #4a7fb5; border-color: #5a8fc5; }
+  .picker {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  button {
+    padding: 10px 8px;
+    font-size: var(--font-md);
+    font-weight: 500;
+  }
 </style>

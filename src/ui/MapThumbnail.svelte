@@ -17,7 +17,6 @@
   let canvasEl: HTMLCanvasElement;
   const SIZE = 96;
 
-  // Scene/camera/quad для отрисовки текстуры → canvas
   let scene: THREE.Scene | undefined;
   let camera: THREE.OrthographicCamera | undefined;
   let mat: THREE.MeshBasicMaterial | undefined;
@@ -51,7 +50,6 @@
 
     const ctx = canvasEl.getContext('2d')!;
     const img = ctx.createImageData(SIZE, SIZE);
-    // WebGL Y-down → flip vertical
     for (let y = 0; y < SIZE; y++) {
       const srcRow = (SIZE - 1 - y) * SIZE * 4;
       const dstRow = y * SIZE * 4;
@@ -62,7 +60,6 @@
     ctx.putImageData(img, 0, 0);
   }
 
-  // Реактивно обновляем при смене target
   $effect(() => {
     void target;
     if (canvasEl && target && renderer) refresh();
@@ -71,21 +68,40 @@
   onMount(refresh);
 </script>
 
-<div class="thumb">
-  <canvas bind:this={canvasEl} width={SIZE} height={SIZE} onclick={onclick} title="Скачать {label}"></canvas>
+<button class="thumb" type="button" onclick={onclick} title="Скачать {label}" disabled={!onclick}>
+  <canvas bind:this={canvasEl} width={SIZE} height={SIZE}></canvas>
   <span class="lbl">{label}</span>
-</div>
+</button>
 
 <style>
-  .thumb { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .thumb {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    background: var(--input-bg);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+  }
+  .thumb:hover {
+    background: var(--input-bg-hover);
+    border-color: var(--primary);
+  }
+  .thumb:active { transform: scale(0.98); }
+  .thumb:focus-visible { box-shadow: 0 0 0 3px var(--primary-ring); outline: none; }
   canvas {
     width: 96px; height: 96px;
-    border-radius: 4px;
-    border: 1px solid #333;
-    cursor: pointer;
+    border-radius: var(--radius-sm);
     image-rendering: pixelated;
-    background: #111;
+    background: var(--bg-canvas);
+    pointer-events: none;
   }
-  canvas:hover { border-color: #4a7fb5; }
-  .lbl { font-size: 11px; color: #aaa; }
+  .lbl {
+    font-size: var(--font-xs);
+    color: var(--fg-muted);
+    font-weight: 500;
+  }
 </style>

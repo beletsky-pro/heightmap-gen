@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.2.0 — 2026-04-30
+
+Большой UI-апдейт.
+
+### Дизайн-система в духе HeroUI
+- Полностью переписан `src/app.css` под семантические CSS-токены: цвета (фон/панель/инпут/primary/accent), радиусы, тени, переходы.
+- Все контролы (кнопки, инпуты, селекты, чекбоксы, range-слайдеры) перерисованы:
+  - Скруглённые края 12px
+  - Плавные hover/active/focus-states (cubic-bezier 180ms)
+  - Focus-ring `box-shadow: 0 0 0 3px primary-ring` на всех интерактивных элементах
+  - Range-слайдер с CSS-gradient track-fill (видно сколько проиграно)
+  - Кастомный чекбокс с SVG-галочкой
+  - Свой select-arrow вместо системного
+- Подключены шрифты Inter (UI) и JetBrains Mono (моно) с Google Fonts.
+- HeroUI-style topbar: gradient-лого, заголовок, GitHub-иконка, ThemeToggle.
+
+### Темы: light / dark / system
+- Новый `src/lib/theme.ts` — store, persist в localStorage, реактивная подписка на `prefers-color-scheme`.
+- Новый `src/ui/ThemeToggle.svelte` — segmented control с тремя иконками (солнце / монитор / луна).
+- Применяется через `data-theme` на `<html>`. Тема инициализируется в `main.ts` ДО маунта Svelte для избежания FOUC.
+- Все цвета во всех компонентах теперь идут через CSS-переменные — обе темы корректны без правок.
+
+### Layout
+- Полная высота экрана: `100dvh` + `min-height: 100vh` (поддержка мобильных динамических viewport).
+- `body { overflow: hidden }` — нет двойного скролла, скроллится только нужная панель.
+- Two-row grid: 56px topbar + 1fr main (3 колонки 320 / 1fr / 300).
+- На ширине <= 1100px колонки сжимаются (280 / 1fr / 260).
+
+### Overlay-bar (плоскость/куб/цилиндр/сфера + tile)
+- Теперь явно `z-index: 10`, `pointer-events: auto`, фон через `color-mix(...)` и `backdrop-filter: blur(12px)`.
+- Виден всегда, даже на тёмных canvas.
+- Стилизован как floating segmented controls с тенью.
+
+### Прочее
+- Заголовок и подпись приложения вынесены в topbar (раньше были в левой панели).
+- Все `<h2>` секций теперь используют общий `.section-heading` token.
+- `MapThumbnail` — теперь полноценная focused button с hover-кольцом primary.
+
 ## v0.1.6 — 2026-04-30
 
 ### B&W маска — отдельный экспортируемый файл

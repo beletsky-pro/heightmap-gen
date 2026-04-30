@@ -24,9 +24,21 @@
 </div>
 
 <style>
-  .presets { margin-bottom: 12px; }
-  .cap { font-size: 12px; color: #aaa; margin-bottom: 4px; }
-  .row { display: flex; flex-wrap: wrap; gap: 4px; }
-  button { padding: 4px 10px; font-size: 12px; }
-  button.active { background: #4a7fb5; border-color: #5a8fc5; }
+  .presets { margin-bottom: 14px; }
+  .cap {
+    font-size: var(--font-sm);
+    color: var(--fg-muted);
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  button {
+    padding: 5px 10px;
+    font-size: var(--font-sm);
+    font-weight: 500;
+  }
 </style>
