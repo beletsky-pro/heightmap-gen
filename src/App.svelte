@@ -71,6 +71,14 @@
   let bridgeApplyMaterial = $state(true);
   let bridgeIncludeMask = $state(false);
 
+  // Live mode — debounced auto-apply при любом изменении
+  let bridgeLive = $state(false);
+  let bridgeLiveSize = $state(1024);
+  let bridgeLiveDebounceMs = $state(500);
+  let livePending = false;
+  let liveTimer: ReturnType<typeof setTimeout> | undefined;
+  let liveDirty = $state(false);  // показывает «есть несохранённые изменения»
+
   async function pingBridge() {
     bridgeStatus = await bridge.ping();
   }
@@ -113,6 +121,8 @@
     preview.setAOTexture(d.ao.texture);
     preview.setRoughnessTexture(d.roughness.texture);
     preview.setDisplacementScale(currentDef.displacementScale * (currentValues.depth ?? 1));
+
+    scheduleLiveApply();
   }
 
   $effect(() => {
@@ -135,6 +145,27 @@
     // untrack: regenerate читает и пишет $state-переменные (heightTarget и др.).
     // Без untrack effect триггерил бы сам себя через свои же writes (infinite loop).
     if (preview) untrack(() => regenerate());
+  });
+
+  // Bridge-config изменения, не запускающие regenerate (выбор tessellate, displace etc).
+  // Если live mode включён, всё равно надо переотправить.
+  $effect(() => {
+    void bridgeDisplaceScale;
+    void bridgeTessellate;
+    void bridgeAddUVW;
+    void bridgeApplyMaterial;
+    void bridgeIncludeMask;
+    void bridgeLive;
+    if (bridgeLive && bridgeStatus.online) untrack(() => scheduleLiveApply());
+  });
+
+  // При выключении Live — отменить запланированное.
+  $effect(() => {
+    if (!bridgeLive) {
+      if (liveTimer !== undefined) { clearTimeout(liveTimer); liveTimer = undefined; }
+      livePending = false;
+      liveDirty = false;
+    }
   });
 
   $effect(() => {
@@ -233,19 +264,20 @@
 
   /**
    * Применить текущие карты в запущенный 3ds Max через локальный bridge.
-   * Перерендеривает на exportSize, кодирует все карты в data URL и POST'ит на 127.0.0.1:7878.
+   * Размер по умолчанию = `exportSize`. Для live-режима передаётся `bridgeLiveSize`
+   * (меньшее разрешение для скорости).
    */
-  async function applyToMax() {
+  async function applyToMax(size: number = exportSize, silent = false) {
     if (!noiseRenderer || bridgeBusy) return;
     if (!bridgeStatus.online) {
-      bridgeMsg = 'Bridge offline. Запустите server.py.';
+      if (!silent) bridgeMsg = 'Bridge offline. Запустите server.py.';
       return;
     }
     bridgeBusy = true;
-    bridgeMsg = `Кодирование ${exportSize}×${exportSize}…`;
+    if (!silent) bridgeMsg = `Кодирование ${size}×${size}…`;
     try {
       const t0 = performance.now();
-      const { height } = generateHeight(noiseRenderer, currentDef, currentValues, exportSize, postSet);
+      const { height } = generateHeight(noiseRenderer, currentDef, currentValues, size, postSet);
       const d = generateDerived(noiseRenderer, height, derivedSet);
       const m = generateMask(noiseRenderer, height, maskSet);
 
@@ -263,7 +295,7 @@
       d.roughness.dispose();
       m.dispose();
 
-      bridgeMsg = 'Отправка в Max…';
+      if (!silent) bridgeMsg = 'Отправка в Max…';
       const maps = {
         height16: await blobToDataUrl(heightBlob16),
         height8:  await blobToDataUrl(heightBlob8),
@@ -280,12 +312,38 @@
         materialName: `HeightmapGen_${currentDef.id}`,
       });
       const ms = Math.round(performance.now() - t0);
-      bridgeMsg = `Готово за ${ms}мс — session ${resp.session}`;
+      bridgeMsg = silent ? `Live ${size}px — ${ms}мс` : `Готово за ${ms}мс — session ${resp.session}`;
+      liveDirty = false;
     } catch (e) {
       bridgeMsg = `Ошибка: ${(e as Error).message}`;
     } finally {
       bridgeBusy = false;
+      // если за время апплая накопились изменения — стартуем ещё раз
+      if (livePending && bridgeLive && bridgeStatus.online) {
+        livePending = false;
+        // микро-задержка чтобы не зацикливаться, если пользователь быстро двигает слайдер
+        setTimeout(() => applyToMax(bridgeLiveSize, true), 30);
+      }
     }
+  }
+
+  /**
+   * Trailing-debounce для live-режима. Каждое изменение откладывает таймер,
+   * по истечении вызывается applyToMax с пониженным разрешением. Если апплай
+   * уже выполняется — флаг livePending запустит ещё один сразу после.
+   */
+  function scheduleLiveApply() {
+    if (!bridgeLive || !bridgeStatus.online) return;
+    liveDirty = true;
+    if (liveTimer !== undefined) clearTimeout(liveTimer);
+    liveTimer = setTimeout(() => {
+      liveTimer = undefined;
+      if (bridgeBusy) {
+        livePending = true;
+      } else {
+        applyToMax(bridgeLiveSize, true);
+      }
+    }, bridgeLiveDebounceMs);
   }
 
   /**
@@ -528,7 +586,21 @@
         Включить B&W mask
       </label>
 
-      <button class="primary big" disabled={!bridgeStatus.online || bridgeBusy} onclick={applyToMax} style="margin-top:10px;">
+      <label class="check live-check" class:on={bridgeLive}>
+        <input type="checkbox" bind:checked={bridgeLive} disabled={!bridgeStatus.online} />
+        <span>Live update — Max обновляется автоматически</span>
+        {#if bridgeLive}
+          <span class="live-dot" class:syncing={bridgeBusy} class:dirty={liveDirty}></span>
+        {/if}
+      </label>
+      {#if bridgeLive}
+        <ParamSlider
+          spec={{ key: 'liveSize', label: 'Live разрешение', min: 256, max: 2048, step: 256, default: 1024, uniform: '' }}
+          bind:value={bridgeLiveSize}
+        />
+      {/if}
+
+      <button class="primary big" disabled={!bridgeStatus.online || bridgeBusy} onclick={() => applyToMax()} style="margin-top:10px;">
         ⚡ Применить в 3ds Max
       </button>
       {#if bridgeMsg}
@@ -781,6 +853,33 @@
     text-decoration: none;
   }
   .bridge-help a:hover { text-decoration: underline; }
+
+  .live-check {
+    padding: 8px 10px;
+    background: var(--input-bg);
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    margin-top: 4px;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+  }
+  .live-check.on {
+    border-color: color-mix(in srgb, var(--primary) 50%, transparent);
+    background: color-mix(in srgb, var(--primary) 10%, var(--input-bg));
+  }
+  .live-dot {
+    width: 8px; height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--success);
+    margin-left: auto;
+    flex-shrink: 0;
+    transition: background var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .live-dot.dirty { background: var(--accent); }
+  .live-dot.syncing {
+    background: var(--primary);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 30%, transparent);
+    animation: pulse 1s ease-in-out infinite;
+  }
   .hints {
     font-size: var(--font-sm);
     color: var(--fg-muted);

@@ -2,6 +2,7 @@
 -- HeightmapGen Bridge — apply script
 -- Generated: {{TIMESTAMP}}
 -- Применяет сгенерированные карты к выделенному объекту.
+-- Idempotent: при повторном применении старые HG_-модификаторы удаляются.
 -- =====================================================================
 
 (
@@ -24,6 +25,24 @@
     heightPath = height8Path
   )
 
+  -- ---- Утилиты ---------------------------------------------------------
+  fn hgIsOurModifier m = (
+    if m == undefined then false else (
+      local nm = m.name
+      (matchPattern nm pattern:"HG_*") or (matchPattern nm pattern:"HeightmapGen_*")
+    )
+  )
+
+  fn hgRemoveOurModifiers obj = (
+    -- Идём с конца, чтобы индексы не сдвигались
+    local i = obj.modifiers.count
+    while i > 0 do (
+      if hgIsOurModifier obj.modifiers[i] do deleteModifier obj i
+      i -= 1
+    )
+  )
+
+  -- ---- Основная логика -------------------------------------------------
   if selection.count == 0 then (
     messageBox "Heightmap Gen: выделите объект перед применением." beep:false title:"Heightmap Gen"
   ) else if not (doesFileExist heightPath) then (
@@ -31,6 +50,9 @@
   ) else (
     local obj = selection[1]
     local objName = obj.name
+
+    -- Удалить ранее наложенные HG-модификаторы (idempotent)
+    hgRemoveOurModifiers obj
 
     -- ---- Material (PhysicalMaterial 2026) ------------------------------
     if applyMat then (
@@ -55,9 +77,13 @@
     )
 
     -- ---- Modifier stack: Tessellate → UVWMap → Displace ----------------
+    -- Все наши модификаторы получают префикс HG_, чтобы при ре-аппле быть
+    -- идентифицированы и удалены.
+
     if tessIters > 0 do (
       try (
         local tess = Tessellate()
+        tess.name = "HG_Tessellate"
         tess.iterations = tessIters
         tess.tension = 0.0
         tess.type = 0
@@ -70,6 +96,7 @@
     if addUVW do (
       try (
         local uvw = UVWMap()
+        uvw.name = "HG_UVWMap"
         uvw.maptype = 4  -- shrinkwrap
         uvw.length = 100
         uvw.width = 100
@@ -82,6 +109,7 @@
 
     try (
       local d = Displace()
+      d.name = "HG_Displace"
       d.strength = dispScale
       d.decay = 0
       d.map = bitmaptexture filename:heightPath
