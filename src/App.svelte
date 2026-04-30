@@ -3,7 +3,7 @@
   import * as THREE from 'three';
   import { createPreview3D, type Preview3D, type PreviewShape } from './core/preview3d';
   import { NoiseRenderer } from './core/NoiseRenderer';
-  import { generateHeight } from './core/TextureGenerator';
+  import { generateHeight, defaultPost, type PostSettings } from './core/TextureGenerator';
   import { generateDerived, defaultDerived, type DerivedSettings } from './core/DerivedMaps';
   import {
     exportHeightmap,
@@ -33,6 +33,8 @@
   let currentValues = $derived(paramsByMaterial[selectedId]);
 
   let derivedSet: DerivedSettings = $state({ ...defaultDerived });
+  let postSet: PostSettings = $state({ ...defaultPost });
+  let bwPreview = $state(false);
 
   let previewCanvas: HTMLCanvasElement;
   let preview = $state<Preview3D | undefined>(undefined);
@@ -76,7 +78,7 @@
   function regenerate() {
     if (!noiseRenderer || !preview) return;
     disposeTargets();
-    const { height } = generateHeight(noiseRenderer, currentDef, currentValues, previewSize);
+    const { height } = generateHeight(noiseRenderer, currentDef, currentValues, previewSize, postSet);
     heightTarget = height;
     const d = generateDerived(noiseRenderer, height, derivedSet);
     normalTarget = d.normal;
@@ -100,9 +102,32 @@
     void derivedSet.roughnessBase;
     void derivedSet.roughnessDetail;
     void derivedSet.flipY;
+    void postSet.contrast;
+    void postSet.gamma;
+    void postSet.invert;
+    void postSet.binarize;
     // untrack: regenerate читает и пишет $state-переменные (heightTarget и др.).
     // Без untrack effect триггерил бы сам себя через свои же writes (infinite loop).
     if (preview) untrack(() => regenerate());
+  });
+
+  $effect(() => {
+    if (!preview) return;
+    if (bwPreview) {
+      // B&W-режим: чисто-белая основа, низкий roughness override, без AO/нормали (только displacement)
+      preview.material.color.set('#ffffff');
+      preview.material.metalness = 0;
+      preview.material.roughness = 1.0;
+      preview.material.aoMapIntensity = 0;
+      preview.material.normalScale.set(0, 0);
+    } else {
+      preview.material.color.set(baseColor);
+      preview.material.metalness = materialMetalness;
+      preview.material.roughness = materialRoughness;
+      preview.material.aoMapIntensity = 1.2;
+      preview.material.normalScale.set(1, 1);
+    }
+    preview.material.needsUpdate = true;
   });
 
   onMount(() => {
@@ -180,7 +205,7 @@
     exportStatus = `${label} — генерация ${exportSize}×${exportSize}…`;
     try {
       const t0 = performance.now();
-      const { height } = generateHeight(noiseRenderer, currentDef, currentValues, exportSize);
+      const { height } = generateHeight(noiseRenderer, currentDef, currentValues, exportSize, postSet);
       const d = generateDerived(noiseRenderer, height, derivedSet);
       await fn(height, d);
       height.dispose();
@@ -213,6 +238,28 @@
     {/each}
 
     <button onclick={randomSeed} style="width:100%;margin-top:8px;">🎲 Случайный seed</button>
+
+    <h2>Карта displacement</h2>
+    <ParamSlider
+      spec={{ key: 'mapContrast', label: 'Контраст', min: 0.5, max: 4, step: 0.05, default: 1, uniform: '' }}
+      bind:value={postSet.contrast}
+    />
+    <ParamSlider
+      spec={{ key: 'mapGamma', label: 'Гамма', min: 0.3, max: 3, step: 0.05, default: 1, uniform: '' }}
+      bind:value={postSet.gamma}
+    />
+    <ParamSlider
+      spec={{ key: 'mapBinarize', label: 'Бинаризация (B&W)', min: 0, max: 1, step: 0.01, default: 0, uniform: '' }}
+      bind:value={postSet.binarize}
+    />
+    <label class="check">
+      <input type="checkbox" bind:checked={postSet.invert} />
+      Инвертировать (выпуклое ↔ вогнутое)
+    </label>
+    <div class="row" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;">
+      <button onclick={() => { postSet.contrast = 1; postSet.gamma = 1; postSet.binarize = 0; postSet.invert = false; }}>Сброс</button>
+      <button onclick={() => { postSet.contrast = 2.5; postSet.gamma = 1; postSet.binarize = 0.6; postSet.invert = false; }}>B&W</button>
+    </div>
 
     <h2>Деривация карт</h2>
     <ParamSlider
@@ -280,6 +327,10 @@
         spec={{ key: 'matMetal', label: 'Металл', min: 0, max: 1, step: 0.01, default: 0, uniform: '' }}
         bind:value={materialMetalness}
       />
+      <label class="check">
+        <input type="checkbox" bind:checked={bwPreview} />
+        Чёрно-белый предпросмотр (только displacement)
+      </label>
     </div>
 
     <h2>Карты</h2>
